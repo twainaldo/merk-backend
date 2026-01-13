@@ -1,0 +1,41 @@
+{
+  "name": "social-media-tracker",
+  "version": "1.0.0",
+  "description": "Système de tracking des métriques TikTok, YouTube, Instagram, Facebook",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "scrape": "node scraper.js",
+    "worker": "node worker.js",
+    "continuous": "node continuous-worker.js",
+    "dev": "nodemon server.js",
+    "import": "node import-accounts.js",
+    "test-proxies": "node test-proxies.js",
+    "test-my-proxies": "node test-my-proxies.js"
+  },
+  "dependencies": {
+    "@tobyg74/tiktok-api-dl": "^1.3.7",
+    "axios": "^1.6.0",
+    "better-sqlite3": "^9.0.0",
+    "cheerio": "^1.1.2",
+    "cors": "^2.8.5",
+    "csv-parser": "^3.0.0",
+    "dotenv": "^16.3.1",
+    "exceljs": "^4.4.0",
+    "express": "^4.18.2",
+    "fast-csv": "^5.0.0",
+    "http-proxy-agent": "^7.0.2",
+    "https-proxy-agent": "^7.0.6",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^3.0.3",
+    "p-limit": "^4.0.0",
+    "p-queue": "^7.4.1",
+    "puppeteer": "^21.0.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "socks-proxy-agent": "^8.0.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
