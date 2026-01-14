@@ -7,9 +7,9 @@ class QueueManager extends EventEmitter {
     super();
 
     // Configuration
-    this.concurrency = options.concurrency || 10; // 10 workers en parallèle
-    this.retryAttempts = options.retryAttempts || 3;
-    this.retryDelay = options.retryDelay || 5000; // 5 secondes
+    this.concurrency = parseInt(options.concurrency) || 10; // 10 workers en parallèle
+    this.retryAttempts = parseInt(options.retryAttempts) || 3;
+    this.retryDelay = parseInt(options.retryDelay) || 5000; // 5 secondes
 
     // Queue
     this.queue = new PQueue({

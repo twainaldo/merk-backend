@@ -4,7 +4,7 @@ const cron = require('node-cron');
 const multer = require('multer');
 const fs = require('fs');
 const cors = require('cors');
-const { accountQueries, statsQueries, db } = require('./database');
+const { accountQueries, hourlyQueries, supabase } = require('./database-supabase');
 const { runWorker, queueManager } = require('./worker');
 const { importFromCSV, importFromText } = require('./import-accounts');
 const { parseBulkAccounts } = require('./platform-detector');
@@ -52,39 +52,35 @@ app.use('/reports', express.static('reports')); // Servir les rapports
 // ============= ROUTES API EXISTANTES =============
 
 // Récupérer tous les comptes (avec pagination)
-app.get('/api/accounts', (req, res) => {
+app.get('/api/accounts', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 50;
     const offset = (page - 1) * limit;
     const platform = req.query.platform;
 
-    let query = 'SELECT * FROM accounts';
-    let countQuery = 'SELECT COUNT(*) as total FROM accounts';
-    const params = [];
+    let query = supabase
+      .from('accounts')
+      .select('*', { count: 'exact' })
+      .order('platform')
+      .order('username')
+      .range(offset, offset + limit - 1);
 
     if (platform) {
-      query += ' WHERE platform = ?';
-      countQuery += ' WHERE platform = ?';
-      params.push(platform);
+      query = query.eq('platform', platform);
     }
 
-    query += ' ORDER BY platform, username LIMIT ? OFFSET ?';
-    params.push(limit, offset);
+    const { data: accounts, error, count } = await query;
 
-    const accounts = db.prepare(query).all(...params);
-
-    // Pour le count, on a besoin seulement du paramètre platform si il existe
-    const countParams = platform ? [platform] : [];
-    const total = db.prepare(countQuery).get(...countParams);
+    if (error) throw error;
 
     res.json({
-      accounts,
+      accounts: accounts || [],
       pagination: {
         page,
         limit,
-        total: total.total,
-        pages: Math.ceil(total.total / limit)
+        total: count || 0,
+        pages: Math.ceil((count || 0) / limit)
       }
     });
   } catch (error) {
@@ -93,7 +89,7 @@ app.get('/api/accounts', (req, res) => {
 });
 
 // Ajouter un compte
-app.post('/api/accounts', (req, res) => {
+app.post('/api/accounts', async (req, res) => {
   try {
     const { platform, username, url } = req.body;
 
@@ -101,7 +97,7 @@ app.post('/api/accounts', (req, res) => {
       return res.status(400).json({ error: 'Tous les champs sont requis' });
     }
 
-    accountQueries.add.run({ platform, username, url });
+    await accountQueries.add.run({ platform, username, url });
     res.json({ success: true, message: 'Compte ajouté avec succès' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -122,9 +118,9 @@ app.post('/api/accounts/bulk', async (req, res) => {
     const errors = [];
 
     // Importer chaque compte
-    results.success.forEach(account => {
+    for (const account of results.success) {
       try {
-        accountQueries.add.run({
+        await accountQueries.add.run({
           platform: account.platform,
           username: account.username,
           url: account.url
@@ -136,7 +132,7 @@ app.post('/api/accounts/bulk', async (req, res) => {
           error: error.message
         });
       }
-    });
+    }
 
     res.json({
       success: true,
@@ -152,9 +148,9 @@ app.post('/api/accounts/bulk', async (req, res) => {
 });
 
 // Supprimer un compte
-app.delete('/api/accounts/:id', (req, res) => {
+app.delete('/api/accounts/:id', async (req, res) => {
   try {
-    accountQueries.delete.run(req.params.id);
+    await accountQueries.delete.run(req.params.id);
     res.json({ success: true, message: 'Compte supprimé avec succès' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -162,49 +158,77 @@ app.delete('/api/accounts/:id', (req, res) => {
 });
 
 // Récupérer les stats d'un compte
-app.get('/api/stats/:accountId', (req, res) => {
+app.get('/api/stats/:accountId', async (req, res) => {
   try {
-    const stats = statsQueries.getByAccount.all(req.params.accountId);
+    const stats = await hourlyQueries.getByAccountAndHours.all(req.params.accountId, 24 * 30); // 30 jours
     res.json(stats);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Dashboard global
-app.get('/api/dashboard', (req, res) => {
+// Dashboard global (simplifié - utilise hourly_stats au lieu de daily_stats)
+app.get('/api/dashboard', async (req, res) => {
   try {
-    const summary = db.prepare(`
-      SELECT
-        a.platform,
-        COUNT(DISTINCT a.id) as account_count,
-        COALESCE(SUM(d.total_videos), 0) as total_videos,
-        COALESCE(SUM(d.total_views), 0) as total_views,
-        COALESCE(SUM(d.new_videos), 0) as new_videos_today,
-        COALESCE(SUM(d.new_views), 0) as new_views_today
-      FROM accounts a
-      LEFT JOIN daily_stats d ON a.id = d.account_id AND d.date = date('now')
-      GROUP BY a.platform
-    `).all();
+    // Pour Supabase, on récupère les données et on fait l'agrégation côté JS
+    const { data: accounts, error: accountsError } = await supabase
+      .from('accounts')
+      .select('id, platform');
 
-    const recentActivity = db.prepare(`
-      SELECT
-        a.platform,
-        a.username,
-        d.date,
-        d.total_videos,
-        d.total_views,
-        d.new_videos,
-        d.new_views
-      FROM daily_stats d
-      JOIN accounts a ON d.account_id = a.id
-      ORDER BY d.scraped_at DESC
-      LIMIT 10
-    `).all();
+    if (accountsError) throw accountsError;
+
+    const { data: latestStats, error: statsError } = await supabase
+      .from('hourly_stats')
+      .select('*')
+      .order('timestamp', { ascending: false })
+      .limit(1000); // Prendre assez de stats pour avoir les dernières par compte
+
+    if (statsError) throw statsError;
+
+    // Grouper par platform
+    const summary = {};
+    const accountsByPlatform = {};
+
+    accounts.forEach(acc => {
+      if (!accountsByPlatform[acc.platform]) {
+        accountsByPlatform[acc.platform] = new Set();
+        summary[acc.platform] = {
+          platform: acc.platform,
+          account_count: 0,
+          total_videos: 0,
+          total_views: 0,
+          new_videos_today: 0,
+          new_views_today: 0
+        };
+      }
+      accountsByPlatform[acc.platform].add(acc.id);
+    });
+
+    // Ajouter les stats
+    const latestPerAccount = {};
+    (latestStats || []).forEach(stat => {
+      if (!latestPerAccount[stat.account_id]) {
+        latestPerAccount[stat.account_id] = stat;
+      }
+    });
+
+    Object.values(latestPerAccount).forEach(stat => {
+      const platform = stat.platform;
+      if (summary[platform]) {
+        summary[platform].total_videos += stat.total_videos || 0;
+        summary[platform].total_views += stat.total_views || 0;
+        summary[platform].new_videos_today += stat.delta_videos || 0;
+        summary[platform].new_views_today += stat.delta_views || 0;
+      }
+    });
+
+    Object.keys(accountsByPlatform).forEach(platform => {
+      summary[platform].account_count = accountsByPlatform[platform].size;
+    });
 
     res.json({
-      summary,
-      recentActivity
+      summary: Object.values(summary),
+      recentActivity: latestStats.slice(0, 10)
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -350,50 +374,53 @@ app.get('/api/proxies/stats', (req, res) => {
 
 // ============= ROUTES HOURLY STATS =============
 
-// Récupérer les stats horaires (dernières 24h)
-app.get('/api/hourly-stats', (req, res) => {
+// Récupérer les stats horaires (dernières pour chaque compte)
+app.get('/api/hourly-stats', async (req, res) => {
   try {
-    const stats = db.prepare(`
-      SELECT
-        a.id,
-        a.platform,
-        a.username,
-        a.url,
-        h.total_videos,
-        h.total_views,
-        h.delta_videos,
-        h.delta_views,
-        h.followers,
-        h.likes,
-        h.timestamp
-      FROM accounts a
-      LEFT JOIN (
-        SELECT account_id, MAX(timestamp) as max_timestamp
-        FROM hourly_stats
-        GROUP BY account_id
-      ) latest ON a.id = latest.account_id
-      LEFT JOIN hourly_stats h ON h.account_id = latest.account_id AND h.timestamp = latest.max_timestamp
-      ORDER BY a.platform, a.username
-    `).all();
+    const { data: accounts, error: accountsError } = await supabase
+      .from('accounts')
+      .select('*')
+      .order('platform')
+      .order('username');
 
-    res.json(stats);
+    if (accountsError) throw accountsError;
+
+    const latestStats = await hourlyQueries.getLatestPerAccount.all();
+
+    // Fusionner accounts avec leurs stats
+    const statsMap = {};
+    (latestStats || []).forEach(stat => {
+      statsMap[stat.account_id] = stat;
+    });
+
+    const result = (accounts || []).map(account => {
+      const stat = statsMap[account.id];
+      return {
+        id: account.id,
+        platform: account.platform,
+        username: account.username,
+        url: account.url,
+        total_videos: stat?.total_videos || 0,
+        total_views: stat?.total_views || 0,
+        delta_videos: stat?.delta_videos || 0,
+        delta_views: stat?.delta_views || 0,
+        followers: stat?.followers || 0,
+        likes: stat?.likes || 0,
+        timestamp: stat?.timestamp || null
+      };
+    });
+
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 // Récupérer l'historique des stats horaires pour un compte
-app.get('/api/hourly-stats/:accountId', (req, res) => {
+app.get('/api/hourly-stats/:accountId', async (req, res) => {
   try {
     const hours = parseInt(req.query.hours) || 24;
-
-    const stats = db.prepare(`
-      SELECT * FROM hourly_stats
-      WHERE account_id = ?
-      AND timestamp >= datetime('now', '-${hours} hours')
-      ORDER BY timestamp DESC
-    `).all(req.params.accountId);
-
+    const stats = await hourlyQueries.getByAccountAndHours.all(req.params.accountId, hours);
     res.json(stats);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -430,41 +457,75 @@ app.get('/api/continuous-reports', (req, res) => {
 });
 
 // Dashboard avec stats horaires
-app.get('/api/dashboard/realtime', (req, res) => {
+app.get('/api/dashboard/realtime', async (req, res) => {
   try {
-    // Stats globales les plus récentes
-    const summary = db.prepare(`
-      SELECT
-        a.platform,
-        COUNT(DISTINCT a.id) as account_count,
-        COALESCE(SUM(h.total_videos), 0) as total_videos,
-        COALESCE(SUM(h.total_views), 0) as total_views,
-        COALESCE(SUM(h.delta_videos), 0) as delta_videos,
-        COALESCE(SUM(h.delta_views), 0) as delta_views
-      FROM accounts a
-      LEFT JOIN (
-        SELECT account_id, total_videos, total_views, delta_videos, delta_views
-        FROM hourly_stats h1
-        WHERE timestamp = (
-          SELECT MAX(timestamp)
-          FROM hourly_stats h2
-          WHERE h2.account_id = h1.account_id
-        )
-      ) h ON a.id = h.account_id
-      GROUP BY a.platform
-    `).all();
+    // Récupérer tous les comptes
+    const { data: accounts, error: accountsError } = await supabase
+      .from('accounts')
+      .select('id, platform');
 
-    // Derniers rapports générés
-    const lastReports = db.prepare(`
-      SELECT timestamp, COUNT(*) as entries
-      FROM hourly_stats
-      GROUP BY timestamp
-      ORDER BY timestamp DESC
-      LIMIT 10
-    `).all();
+    if (accountsError) throw accountsError;
+
+    // Récupérer les dernières stats pour chaque compte
+    const latestStats = await hourlyQueries.getLatestPerAccount.all();
+
+    // Grouper par platform
+    const summary = {};
+    const accountsByPlatform = {};
+
+    (accounts || []).forEach(acc => {
+      if (!accountsByPlatform[acc.platform]) {
+        accountsByPlatform[acc.platform] = new Set();
+        summary[acc.platform] = {
+          platform: acc.platform,
+          account_count: 0,
+          total_videos: 0,
+          total_views: 0,
+          delta_videos: 0,
+          delta_views: 0
+        };
+      }
+      accountsByPlatform[acc.platform].add(acc.id);
+    });
+
+    // Ajouter les stats
+    (latestStats || []).forEach(stat => {
+      const platform = stat.platform;
+      if (summary[platform]) {
+        summary[platform].total_videos += stat.total_videos || 0;
+        summary[platform].total_views += stat.total_views || 0;
+        summary[platform].delta_videos += stat.delta_videos || 0;
+        summary[platform].delta_views += stat.delta_views || 0;
+      }
+    });
+
+    Object.keys(accountsByPlatform).forEach(platform => {
+      summary[platform].account_count = accountsByPlatform[platform].size;
+    });
+
+    // Derniers rapports générés (groupés par timestamp)
+    const { data: allStats, error: statsError } = await supabase
+      .from('hourly_stats')
+      .select('timestamp')
+      .order('timestamp', { ascending: false })
+      .limit(1000);
+
+    if (statsError) throw statsError;
+
+    // Grouper par timestamp
+    const timestampCounts = {};
+    (allStats || []).forEach(stat => {
+      const ts = new Date(stat.timestamp).toISOString();
+      timestampCounts[ts] = (timestampCounts[ts] || 0) + 1;
+    });
+
+    const lastReports = Object.entries(timestampCounts)
+      .map(([timestamp, entries]) => ({ timestamp, entries }))
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, 10);
 
     res.json({
-      summary,
+      summary: Object.values(summary),
       lastReports
     });
   } catch (error) {

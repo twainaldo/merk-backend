@@ -1,4 +1,4 @@
-const { accountQueries, videoQueries, db } = require('./database');
+const { accountQueries, videoQueries, hourlyQueries, supabase } = require('./database-supabase');
 const { scrapeTikTokDetailed } = require('./scrapers');
 const proxyManager = require('./proxy-manager');
 const PQueue = require('p-queue').default;
@@ -7,41 +7,7 @@ const PQueue = require('p-queue').default;
 const SCRAPE_INTERVAL = 10 * 1000; // 10 secondes entre chaque cycle (scraping quasi-continu)
 const WORKERS = 10; // Workers parallèles pour scraper plus vite
 
-// Créer la table hourly_stats si elle n'existe pas (pour compatibilité)
-db.exec(`
-  CREATE TABLE IF NOT EXISTS hourly_stats (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_id INTEGER NOT NULL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    total_videos INTEGER DEFAULT 0,
-    total_views INTEGER DEFAULT 0,
-    delta_videos INTEGER DEFAULT 0,
-    delta_views INTEGER DEFAULT 0,
-    followers INTEGER DEFAULT 0,
-    likes INTEGER DEFAULT 0,
-    platform TEXT,
-    username TEXT,
-    FOREIGN KEY (account_id) REFERENCES accounts(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_hourly_stats_timestamp ON hourly_stats(timestamp);
-  CREATE INDEX IF NOT EXISTS idx_hourly_stats_account ON hourly_stats(account_id);
-`);
-
-// Queries pour hourly_stats
-const hourlyQueries = {
-  add: db.prepare(`
-    INSERT INTO hourly_stats (account_id, total_videos, total_views, delta_videos, delta_views, followers, likes, platform, username)
-    VALUES (@account_id, @total_videos, @total_views, @delta_videos, @delta_views, @followers, @likes, @platform, @username)
-  `),
-
-  getLatest: db.prepare(`
-    SELECT * FROM hourly_stats
-    WHERE account_id = ?
-    ORDER BY timestamp DESC
-    LIMIT 1
-  `)
-};
+// Note: Les tables sont déjà créées dans Supabase via le schema SQL
 
 // Charger les proxies
 console.log('🌐 Chargement des proxies...');
@@ -60,7 +26,7 @@ const scrapeTikTokAccountDetailed = async (account, maxRetries = 3) => {
       const data = await scrapeTikTokDetailed(account.url, proxy);
 
       // Récupérer les URLs des vidéos existantes pour ce compte
-      const existingVideos = videoQueries.getUrlsByAccount.all(account.id);
+      const existingVideos = await videoQueries.getUrlsByAccount.all(account.id);
       const existingVideoUrls = new Set(existingVideos.map(v => v.video_url));
 
       let newVideosCount = 0;
@@ -74,7 +40,7 @@ const scrapeTikTokAccountDetailed = async (account, maxRetries = 3) => {
 
         if (isNewVideo) {
           // Nouvelle vidéo - insérer toutes les données
-          videoQueries.upsertFull.run({
+          await videoQueries.upsertFull.run({
             account_id: account.id,
             video_url: video.video_url,
             video_id: video.video_id,
@@ -94,7 +60,7 @@ const scrapeTikTokAccountDetailed = async (account, maxRetries = 3) => {
           newVideosCount++;
         } else {
           // Vidéo existante - mettre à jour seulement les metrics
-          videoQueries.updateMetrics.run({
+          await videoQueries.updateMetrics.run({
             video_url: video.video_url,
             views: video.views,
             likes: video.likes,
@@ -111,7 +77,7 @@ const scrapeTikTokAccountDetailed = async (account, maxRetries = 3) => {
       const totalViews = data.videos.reduce((sum, v) => sum + v.views, 0);
 
       // Récupérer les stats précédentes pour calculer les deltas
-      const previousStats = hourlyQueries.getLatest.get(account.id);
+      const previousStats = await hourlyQueries.getLatest.get(account.id);
 
       const deltaVideos = previousStats
         ? totalVideos - (previousStats.total_videos || 0)
@@ -122,7 +88,7 @@ const scrapeTikTokAccountDetailed = async (account, maxRetries = 3) => {
         : totalViews;
 
       // Sauvegarder dans hourly_stats pour compatibilité
-      hourlyQueries.add.run({
+      await hourlyQueries.add.run({
         account_id: account.id,
         total_videos: totalVideos,
         total_views: totalViews,
@@ -185,7 +151,7 @@ const runDetailedScraping = async () => {
     console.log(`${'='.repeat(60)}\n`);
 
     // Récupérer tous les comptes TikTok
-    const allAccounts = accountQueries.getAll.all();
+    const allAccounts = await accountQueries.getAll.all();
     const accounts = allAccounts.filter(a => a.platform.toLowerCase() === 'tiktok');
 
     console.log(`📱 ${accounts.length} comptes TikTok à scraper en détail...\n`);

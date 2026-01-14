@@ -4,7 +4,7 @@ const { scrapeAccount } = require('./scrapers');
 const { statsQueries } = require('./database');
 
 // Configuration
-const CONCURRENCY = process.env.WORKER_CONCURRENCY || 10;
+const CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY) || 10;
 const USE_PROXIES = process.env.USE_PROXIES !== 'false'; // Par défaut activé
 
 // Créer la queue

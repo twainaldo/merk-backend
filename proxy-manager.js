@@ -5,6 +5,7 @@ const path = require('path');
 
 class ProxyManager {
   constructor() {
+    
     this.proxies = [];
     this.currentIndex = 0;
     this.failedProxies = new Set();
