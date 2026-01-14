@@ -4,8 +4,8 @@ const proxyManager = require('./proxy-manager');
 const PQueue = require('p-queue').default;
 
 // Configuration
-const SCRAPE_INTERVAL = 60 * 60 * 1000; // 1 heure en millisecondes
-const WORKERS = 5; // Réduit car scraping détaillé prend plus de temps
+const SCRAPE_INTERVAL = 10 * 1000; // 10 secondes entre chaque cycle (scraping quasi-continu)
+const WORKERS = 10; // Workers parallèles pour scraper plus vite
 
 // Créer la table hourly_stats si elle n'existe pas (pour compatibilité)
 db.exec(`
@@ -166,10 +166,10 @@ const runDetailedScraping = async () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║                                                            ║
-║     🚀 Social Media Tracker - Mode Détaillé              ║
+║     🚀 Social Media Tracker - Mode Continu               ║
 ║                                                            ║
-║     ⏱️ Intervalle: ${SCRAPE_INTERVAL / 1000 / 60} minutes                           ║
-║     ⚙️ Workers: ${WORKERS}                                          ║
+║     ⏱️ Scraping en BOUCLE (pause: ${SCRAPE_INTERVAL / 1000}s)               ║
+║     ⚙️ Workers: ${WORKERS} parallèles                               ║
 ║     🌐 Proxies: ${proxyManager.proxies.length} chargés                              ║
 ║     📹 Collecte: Données complètes des vidéos            ║
 ║                                                            ║
@@ -238,8 +238,10 @@ const runDetailedScraping = async () => {
     const waitTime = Math.max(0, SCRAPE_INTERVAL - elapsed);
 
     if (waitTime > 0) {
-      console.log(`⏳ Prochain scraping dans ${Math.round(waitTime / 1000 / 60)} minutes...\n`);
+      console.log(`⏳ Prochain scraping dans ${Math.round(waitTime / 1000)}s...\n`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
+    } else {
+      console.log(`⚡ Lancement immédiat du prochain cycle...\n`);
     }
   }
 };
