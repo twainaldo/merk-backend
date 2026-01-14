@@ -1,8 +1,19 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
+
+// Utiliser un dossier persistant sur Railway si disponible
+const dataDir = process.env.RAILWAY_VOLUME_MOUNT_PATH || __dirname;
+const dbPath = path.join(dataDir, 'social-tracker.db');
+
+// Créer le dossier si nécessaire
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
 
 // Initialiser la base de données
-const db = new Database(path.join(__dirname, 'social-tracker.db'));
+const db = new Database(dbPath);
+console.log(`📊 Database initialized at: ${dbPath}`);
 
 // Créer les tables
 db.exec(`
