@@ -28,8 +28,41 @@ db.exec(`
     UNIQUE(account_id, date)
   );
 
+  CREATE TABLE IF NOT EXISTS videos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL,
+    video_url TEXT NOT NULL,
+    video_id TEXT,
+
+    -- Metrics (updated on every scrape)
+    views INTEGER DEFAULT 0,
+    likes INTEGER DEFAULT 0,
+    comments INTEGER DEFAULT 0,
+    shares INTEGER DEFAULT 0,
+    saves INTEGER DEFAULT 0,
+
+    -- Content metadata (collected once on first scrape)
+    duration INTEGER,
+    published_date DATETIME,
+    description TEXT,
+    hashtags TEXT,
+    audio_name TEXT,
+    audio_url TEXT,
+    thumbnail_url TEXT,
+
+    -- Tracking
+    first_scraped_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_scraped_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (account_id) REFERENCES accounts(id),
+    UNIQUE(video_url)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_daily_stats_date ON daily_stats(date);
   CREATE INDEX IF NOT EXISTS idx_daily_stats_account ON daily_stats(account_id);
+  CREATE INDEX IF NOT EXISTS idx_videos_account ON videos(account_id);
+  CREATE INDEX IF NOT EXISTS idx_videos_url ON videos(video_url);
+  CREATE INDEX IF NOT EXISTS idx_videos_published ON videos(published_date);
 `);
 
 // Fonctions pour gérer les comptes
@@ -82,8 +115,72 @@ const statsQueries = {
   `)
 };
 
+// Fonctions pour gérer les vidéos
+const videoQueries = {
+  // Insérer ou mettre à jour une vidéo (full data pour nouvelle vidéo)
+  upsertFull: db.prepare(`
+    INSERT INTO videos (
+      account_id, video_url, video_id,
+      views, likes, comments, shares, saves,
+      duration, published_date, description, hashtags,
+      audio_name, audio_url, thumbnail_url
+    ) VALUES (
+      @account_id, @video_url, @video_id,
+      @views, @likes, @comments, @shares, @saves,
+      @duration, @published_date, @description, @hashtags,
+      @audio_name, @audio_url, @thumbnail_url
+    )
+    ON CONFLICT(video_url) DO UPDATE SET
+      views = @views,
+      likes = @likes,
+      comments = @comments,
+      shares = @shares,
+      saves = @saves,
+      last_scraped_at = CURRENT_TIMESTAMP
+  `),
+
+  // Mettre à jour seulement les metrics pour une vidéo existante
+  updateMetrics: db.prepare(`
+    UPDATE videos SET
+      views = @views,
+      likes = @likes,
+      comments = @comments,
+      shares = @shares,
+      saves = @saves,
+      last_scraped_at = CURRENT_TIMESTAMP
+    WHERE video_url = @video_url
+  `),
+
+  // Vérifier si une vidéo existe
+  exists: db.prepare(`
+    SELECT id FROM videos WHERE video_url = ?
+  `),
+
+  // Récupérer toutes les vidéos d'un compte
+  getByAccount: db.prepare(`
+    SELECT * FROM videos
+    WHERE account_id = ?
+    ORDER BY published_date DESC
+  `),
+
+  // Récupérer les vidéos les plus performantes
+  getTopVideos: db.prepare(`
+    SELECT v.*, a.platform, a.username
+    FROM videos v
+    JOIN accounts a ON v.account_id = a.id
+    ORDER BY v.views DESC
+    LIMIT ?
+  `),
+
+  // Récupérer les URLs des vidéos d'un compte (pour vérifier si nouvelle)
+  getUrlsByAccount: db.prepare(`
+    SELECT video_url FROM videos WHERE account_id = ?
+  `)
+};
+
 module.exports = {
   db,
   accountQueries,
-  statsQueries
+  statsQueries,
+  videoQueries
 };

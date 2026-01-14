@@ -84,6 +84,80 @@ const scrapeTikTok = async (url, proxy = null) => {
   }
 };
 
+// Scraper TikTok détaillé - Retourne les données complètes de chaque vidéo
+const scrapeTikTokDetailed = async (url, proxy = null) => {
+  try {
+    // Extraire le username depuis l'URL
+    const username = url.split('@')[1]?.split('/')[0]?.split('?')[0];
+    if (!username) {
+      throw new Error('Username non trouvé dans l\'URL');
+    }
+
+    // 1. Récupérer les stats du profil avec StalkUser
+    const userResult = await StalkUser(username);
+
+    if (userResult.status !== 'success' || !userResult.result) {
+      throw new Error('Impossible de récupérer le profil TikTok');
+    }
+
+    const userStats = userResult.result.stats;
+    const profileStats = {
+      followers: userStats?.followerCount || 0,
+      likes: userStats?.heartCount || 0
+    };
+
+    // 2. Récupérer toutes les vidéos disponibles
+    const postsResult = await GetUserPosts(username, 0, 35);
+
+    if (postsResult.status !== 'success' || !postsResult.result) {
+      throw new Error('Impossible de récupérer les posts TikTok');
+    }
+
+    const videos = postsResult.result || [];
+
+    // 3. Extraire les détails de chaque vidéo
+    const detailedVideos = videos.map(video => {
+      // Extraire les hashtags depuis la description
+      const description = video?.desc || video?.title || '';
+      const hashtags = description.match(/#\w+/g)?.join(' ') || '';
+
+      // Construire l'URL de la vidéo
+      const videoId = video?.id || '';
+      const videoUrl = videoId ? `https://www.tiktok.com/@${username}/video/${videoId}` : '';
+
+      return {
+        video_url: videoUrl,
+        video_id: videoId,
+
+        // Metrics
+        views: video?.stats?.playCount || 0,
+        likes: video?.stats?.diggCount || 0,
+        comments: video?.stats?.commentCount || 0,
+        shares: video?.stats?.shareCount || 0,
+        saves: video?.stats?.collectCount || 0,
+
+        // Content metadata
+        duration: video?.music?.duration || 0,
+        published_date: video?.createTime || null,
+        description: description,
+        hashtags: hashtags,
+        audio_name: video?.music?.title || '',
+        audio_url: video?.music?.playUrl || '',
+        thumbnail_url: video?.imagePost?.[0] || video?.video?.cover || ''
+      };
+    });
+
+    return {
+      profileStats,
+      videos: detailedVideos,
+      totalVideos: videos.length
+    };
+  } catch (error) {
+    console.error('Erreur TikTok detailed scraping:', error.message);
+    throw error;
+  }
+};
+
 // Scraper YouTube
 const scrapeYouTube = async (url, proxy = null) => {
   const browser = await getBrowser(proxy);
@@ -233,6 +307,7 @@ const scrapeAccount = async (platform, url, proxy = null) => {
 module.exports = {
   scrapeAccount,
   scrapeTikTok,
+  scrapeTikTokDetailed,
   scrapeYouTube,
   scrapeInstagram,
   scrapeFacebook

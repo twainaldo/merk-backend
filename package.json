@@ -4,11 +4,12 @@
   "description": "Système de tracking des métriques TikTok, YouTube, Instagram, Facebook",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node start-production.js",
+    "dev": "nodemon server.js",
     "scrape": "node scraper.js",
     "worker": "node worker.js",
     "continuous": "node continuous-worker.js",
-    "dev": "nodemon server.js",
+    "detailed-worker": "node detailed-worker.js",
     "import": "node import-accounts.js",
     "test-proxies": "node test-proxies.js",
     "test-my-proxies": "node test-my-proxies.js"
