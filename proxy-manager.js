@@ -31,14 +31,30 @@ class ProxyManager {
         const lines = data.split('\n').filter(line => line.trim());
 
         const proxies = lines.map(line => {
-          const [host, port] = line.trim().split(':');
-          return {
-            protocol: 'http',
-            host,
-            port: parseInt(port),
-            username: null,
-            password: null
-          };
+          const trimmed = line.trim();
+
+          // Format: username:password@host:port ou host:port
+          if (trimmed.includes('@')) {
+            const [auth, hostPort] = trimmed.split('@');
+            const [username, password] = auth.split(':');
+            const [host, port] = hostPort.split(':');
+            return {
+              protocol: 'http',
+              host,
+              port: parseInt(port),
+              username,
+              password
+            };
+          } else {
+            const [host, port] = trimmed.split(':');
+            return {
+              protocol: 'http',
+              host,
+              port: parseInt(port),
+              username: null,
+              password: null
+            };
+          }
         }).filter(p => p.host && p.port);
 
         if (proxies.length > 0) {

@@ -50,7 +50,11 @@ const scrapeTikTok = async (url, proxy = null) => {
     // Préparer les options avec le proxy
     const options = {};
     if (proxy) {
-      options.proxy = `http://${proxy.host}:${proxy.port}`;
+      if (proxy.username && proxy.password) {
+        options.proxy = `http://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`;
+      } else {
+        options.proxy = `http://${proxy.host}:${proxy.port}`;
+      }
     }
 
     // 1. Récupérer les stats du profil avec StalkUser
@@ -102,8 +106,13 @@ const scrapeTikTokDetailed = async (url, proxy = null) => {
     // Préparer les options avec le proxy
     const options = {};
     if (proxy) {
-      options.proxy = `http://${proxy.host}:${proxy.port}`;
-      console.log(`🌐 TikTok scraping via proxy: ${options.proxy}`);
+      if (proxy.username && proxy.password) {
+        options.proxy = `http://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`;
+        console.log(`🌐 TikTok scraping via proxy: http://${proxy.username}:***@${proxy.host}:${proxy.port}`);
+      } else {
+        options.proxy = `http://${proxy.host}:${proxy.port}`;
+        console.log(`🌐 TikTok scraping via proxy: ${options.proxy}`);
+      }
     }
 
     // 1. Récupérer les stats du profil avec StalkUser
