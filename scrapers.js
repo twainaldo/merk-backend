@@ -47,8 +47,14 @@ const scrapeTikTok = async (url, proxy = null) => {
       throw new Error('Username non trouvé dans l\'URL');
     }
 
+    // Préparer les options avec le proxy
+    const options = {};
+    if (proxy) {
+      options.proxy = `http://${proxy.host}:${proxy.port}`;
+    }
+
     // 1. Récupérer les stats du profil avec StalkUser
-    const userResult = await StalkUser(username);
+    const userResult = await StalkUser(username, options);
 
     if (userResult.status !== 'success' || !userResult.result) {
       throw new Error('Impossible de récupérer le profil TikTok');
@@ -57,7 +63,7 @@ const scrapeTikTok = async (url, proxy = null) => {
     const userStats = userResult.result.stats;
 
     // 2. Récupérer les vidéos avec GetUserPosts pour avoir les vues
-    const postsResult = await GetUserPosts(username, 0, 35);
+    const postsResult = await GetUserPosts(username, 0, 35, options);
 
     if (postsResult.status !== 'success' || !postsResult.result) {
       throw new Error('Impossible de récupérer les posts TikTok');
@@ -93,8 +99,15 @@ const scrapeTikTokDetailed = async (url, proxy = null) => {
       throw new Error('Username non trouvé dans l\'URL');
     }
 
+    // Préparer les options avec le proxy
+    const options = {};
+    if (proxy) {
+      options.proxy = `http://${proxy.host}:${proxy.port}`;
+      console.log(`🌐 TikTok scraping via proxy: ${options.proxy}`);
+    }
+
     // 1. Récupérer les stats du profil avec StalkUser
-    const userResult = await StalkUser(username);
+    const userResult = await StalkUser(username, options);
 
     if (userResult.status !== 'success' || !userResult.result) {
       throw new Error('Impossible de récupérer le profil TikTok');
@@ -107,7 +120,7 @@ const scrapeTikTokDetailed = async (url, proxy = null) => {
     };
 
     // 2. Récupérer toutes les vidéos disponibles
-    const postsResult = await GetUserPosts(username, 0, 35);
+    const postsResult = await GetUserPosts(username, 0, 35, options);
 
     if (postsResult.status !== 'success' || !postsResult.result) {
       throw new Error('Impossible de récupérer les posts TikTok');
