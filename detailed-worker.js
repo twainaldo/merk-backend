@@ -2,6 +2,8 @@ const { accountQueries, videoQueries, hourlyQueries, supabase } = require('./dat
 const { scrapeTikTokDetailed } = require('./scrapers');
 const proxyManager = require('./proxy-manager');
 const PQueue = require('p-queue').default;
+const axios = require('axios');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 
 // Configuration
 const SCRAPE_INTERVAL = 10 * 1000; // 10 secondes entre chaque cycle (scraping quasi-continu)
@@ -15,6 +17,57 @@ const proxiesLoaded = proxyManager.loadFromFile('proxies');
 if (!proxiesLoaded) {
   console.log('⚠️ Pas de proxies trouvés, scraping sans proxy');
 }
+
+// Test de diagnostic du proxy au démarrage
+const testProxyConnection = async () => {
+  const proxy = proxyManager.getNextProxy();
+  if (!proxy) {
+    console.log('⚠️ Aucun proxy configuré pour le test');
+    return false;
+  }
+
+  let proxyUrl;
+  if (proxy.username && proxy.password) {
+    proxyUrl = `http://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`;
+  } else {
+    proxyUrl = `http://${proxy.host}:${proxy.port}`;
+  }
+
+  console.log(`\n🔍 TEST DIAGNOSTIC DU PROXY`);
+  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  console.log(`Proxy: ${proxy.host}:${proxy.port}`);
+  console.log(`Auth: ${proxy.username ? 'Oui' : 'Non'}`);
+
+  // Test 1: IP sans proxy
+  try {
+    const directResponse = await axios.get('https://api.ipify.org?format=json', { timeout: 10000 });
+    console.log(`\n1️⃣ IP directe (sans proxy): ${directResponse.data.ip}`);
+    console.log(`   ⚠️ Cette IP doit être whitelistée dans GridPanel!`);
+  } catch (error) {
+    console.log(`\n1️⃣ IP directe: Erreur - ${error.message}`);
+  }
+
+  // Test 2: IP avec proxy
+  try {
+    const agent = new HttpsProxyAgent(proxyUrl);
+    const proxyResponse = await axios.get('https://api.ipify.org?format=json', {
+      timeout: 15000,
+      httpsAgent: agent
+    });
+    console.log(`\n2️⃣ IP via proxy: ${proxyResponse.data.ip}`);
+    console.log(`   ✅ Le proxy fonctionne correctement!`);
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+    return true;
+  } catch (error) {
+    console.log(`\n2️⃣ IP via proxy: ERREUR`);
+    console.log(`   ❌ ${error.message}`);
+    if (error.response) {
+      console.log(`   Status: ${error.response.status}`);
+    }
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+    return false;
+  }
+};
 
 // Fonction pour scraper un compte TikTok avec détails
 const scrapeTikTokAccountDetailed = async (account, maxRetries = 3) => {
@@ -226,8 +279,22 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-// Démarrer
-runDetailedScraping().catch(error => {
+// Démarrer avec test de diagnostic
+const start = async () => {
+  // Test du proxy au démarrage
+  const proxyWorks = await testProxyConnection();
+
+  if (!proxyWorks) {
+    console.log('⚠️ Le proxy ne fonctionne pas!');
+    console.log('👉 Vérifie que l\'IP directe affichée ci-dessus est whitelistée dans GridPanel');
+    console.log('👉 Sur Railway, l\'IP peut changer à chaque déploiement\n');
+  }
+
+  // Lancer le scraping même si le proxy échoue (pour voir les erreurs)
+  await runDetailedScraping();
+};
+
+start().catch(error => {
   console.error('❌ Erreur fatale:', error);
   process.exit(1);
 });
