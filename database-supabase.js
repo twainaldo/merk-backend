@@ -105,6 +105,23 @@ const videoQueries = {
   // Insérer ou mettre à jour une vidéo avec toutes les données
   upsertFull: {
     run: async (params) => {
+      // Convertir le timestamp Unix en ISO si nécessaire
+      let publishedDate = null;
+      if (params.published_date) {
+        // Si c'est un nombre (timestamp Unix en secondes)
+        if (typeof params.published_date === 'number') {
+          publishedDate = new Date(params.published_date * 1000).toISOString();
+        } else if (typeof params.published_date === 'string') {
+          // Si c'est déjà une string, vérifier si c'est un timestamp ou une date ISO
+          const parsed = parseInt(params.published_date);
+          if (!isNaN(parsed) && parsed > 1000000000) {
+            publishedDate = new Date(parsed * 1000).toISOString();
+          } else {
+            publishedDate = params.published_date;
+          }
+        }
+      }
+
       const { data, error } = await supabase
         .from('videos')
         .upsert({
@@ -117,7 +134,7 @@ const videoQueries = {
           shares: params.shares,
           saves: params.saves,
           duration: params.duration,
-          published_date: params.published_date,
+          published_date: publishedDate,
           description: params.description,
           hashtags: params.hashtags,
           audio_name: params.audio_name,
