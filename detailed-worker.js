@@ -1,18 +1,26 @@
-// Charger le proxy AVANT tout autre import pour forcer les variables d'env
+// Charger le proxy AVANT tout autre import avec global-agent
 const fs = require('fs');
 const path = require('path');
 
-// Lire le fichier proxy et configurer les variables d'environnement
+// Lire le fichier proxy et configurer global-agent
 const proxyFile = path.join(__dirname, 'proxies');
+let proxyConfigured = false;
+
 if (fs.existsSync(proxyFile)) {
   const proxyLine = fs.readFileSync(proxyFile, 'utf8').trim().split('\n')[0];
   if (proxyLine && proxyLine.includes('@')) {
     const proxyUrl = `http://${proxyLine}`;
-    process.env.HTTP_PROXY = proxyUrl;
-    process.env.HTTPS_PROXY = proxyUrl;
-    process.env.http_proxy = proxyUrl;
-    process.env.https_proxy = proxyUrl;
-    console.log(`🌐 Proxy global configuré: http://${proxyLine.split('@')[1]}`);
+
+    // Configurer global-agent pour intercepter TOUTES les requêtes
+    process.env.GLOBAL_AGENT_HTTP_PROXY = proxyUrl;
+    process.env.GLOBAL_AGENT_HTTPS_PROXY = proxyUrl;
+    process.env.GLOBAL_AGENT_NO_PROXY = ''; // Pas d'exceptions
+
+    // Activer global-agent
+    require('global-agent/bootstrap');
+
+    proxyConfigured = true;
+    console.log(`🌐 Global-Agent activé avec proxy: http://${proxyLine.split('@')[1]}`);
   }
 }
 
@@ -21,7 +29,6 @@ const { scrapeTikTokDetailed } = require('./scrapers');
 const proxyManager = require('./proxy-manager');
 const PQueue = require('p-queue').default;
 const axios = require('axios');
-const { HttpsProxyAgent } = require('https-proxy-agent');
 
 // Configuration
 const SCRAPE_INTERVAL = 10 * 1000; // 10 secondes entre chaque cycle (scraping quasi-continu)
@@ -39,46 +46,28 @@ if (!proxiesLoaded) {
 // Test de diagnostic du proxy au démarrage
 const testProxyConnection = async () => {
   const proxy = proxyManager.getNextProxy();
-  if (!proxy) {
-    console.log('⚠️ Aucun proxy configuré pour le test');
-    return false;
-  }
 
-  let proxyUrl;
-  if (proxy.username && proxy.password) {
-    proxyUrl = `http://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`;
-  } else {
-    proxyUrl = `http://${proxy.host}:${proxy.port}`;
-  }
-
-  console.log(`\n🔍 TEST DIAGNOSTIC DU PROXY`);
+  console.log(`\n🔍 TEST DIAGNOSTIC DU PROXY (Global-Agent)`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  console.log(`Proxy: ${proxy.host}:${proxy.port}`);
-  console.log(`Auth: ${proxy.username ? 'Oui' : 'Non'}`);
+  console.log(`Proxy: ${proxy ? `${proxy.host}:${proxy.port}` : 'Non configuré'}`);
+  console.log(`Auth: ${proxy?.username ? 'Oui' : 'Non'}`);
+  console.log(`Global-Agent: ${proxyConfigured ? 'Activé' : 'Désactivé'}`);
 
-  // Test 1: IP sans proxy
+  // Test: IP via global-agent (toutes les requêtes passent par le proxy)
   try {
-    const directResponse = await axios.get('https://api.ipify.org?format=json', { timeout: 10000 });
-    console.log(`\n1️⃣ IP directe (sans proxy): ${directResponse.data.ip}`);
-    console.log(`   ⚠️ Cette IP doit être whitelistée dans GridPanel!`);
-  } catch (error) {
-    console.log(`\n1️⃣ IP directe: Erreur - ${error.message}`);
-  }
+    // Cette requête devrait automatiquement passer par le proxy grâce à global-agent
+    const response = await axios.get('https://api.ipify.org?format=json', { timeout: 15000 });
+    console.log(`\n🌐 IP détectée: ${response.data.ip}`);
 
-  // Test 2: IP avec proxy
-  try {
-    const agent = new HttpsProxyAgent(proxyUrl);
-    const proxyResponse = await axios.get('https://api.ipify.org?format=json', {
-      timeout: 15000,
-      httpsAgent: agent
-    });
-    console.log(`\n2️⃣ IP via proxy: ${proxyResponse.data.ip}`);
-    console.log(`   ✅ Le proxy fonctionne correctement!`);
+    if (proxyConfigured) {
+      console.log(`   ✅ Global-Agent fonctionne - toutes les requêtes passent par le proxy!`);
+    } else {
+      console.log(`   ⚠️ C'est l'IP directe de Railway (proxy non configuré)`);
+    }
     console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
     return true;
   } catch (error) {
-    console.log(`\n2️⃣ IP via proxy: ERREUR`);
-    console.log(`   ❌ ${error.message}`);
+    console.log(`\n❌ Erreur de connexion: ${error.message}`);
     if (error.response) {
       console.log(`   Status: ${error.response.status}`);
     }
