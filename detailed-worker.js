@@ -5,7 +5,7 @@ const PQueue = require('p-queue').default;
 
 // Configuration
 const SCRAPE_INTERVAL = 10 * 1000; // 10 secondes entre chaque cycle (scraping quasi-continu)
-const WORKERS = 10; // Workers parallèles pour scraper plus vite
+const WORKERS = 1; // 1 seul worker pour éviter le rate limiting du proxy
 
 // Note: Les tables sont déjà créées dans Supabase via le schema SQL
 
@@ -18,6 +18,10 @@ if (!proxiesLoaded) {
 
 // Fonction pour scraper un compte TikTok avec détails
 const scrapeTikTokAccountDetailed = async (account, maxRetries = 3) => {
+  // Délai aléatoire entre 2-5 secondes pour éviter le rate limiting
+  const delay = 2000 + Math.random() * 3000;
+  await new Promise(resolve => setTimeout(resolve, delay));
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const proxy = proxyManager.getNextProxy();
