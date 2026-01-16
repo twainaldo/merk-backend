@@ -1,3 +1,21 @@
+// Charger le proxy AVANT tout autre import pour forcer les variables d'env
+const fs = require('fs');
+const path = require('path');
+
+// Lire le fichier proxy et configurer les variables d'environnement
+const proxyFile = path.join(__dirname, 'proxies');
+if (fs.existsSync(proxyFile)) {
+  const proxyLine = fs.readFileSync(proxyFile, 'utf8').trim().split('\n')[0];
+  if (proxyLine && proxyLine.includes('@')) {
+    const proxyUrl = `http://${proxyLine}`;
+    process.env.HTTP_PROXY = proxyUrl;
+    process.env.HTTPS_PROXY = proxyUrl;
+    process.env.http_proxy = proxyUrl;
+    process.env.https_proxy = proxyUrl;
+    console.log(`🌐 Proxy global configuré: http://${proxyLine.split('@')[1]}`);
+  }
+}
+
 const { accountQueries, videoQueries, hourlyQueries, supabase } = require('./database-supabase');
 const { scrapeTikTokDetailed } = require('./scrapers');
 const proxyManager = require('./proxy-manager');
