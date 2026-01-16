@@ -110,6 +110,7 @@ const scrapeTikTokDetailed = async (url, proxy = null) => {
     const userResult = await StalkUser(username, options);
 
     if (userResult.status !== 'success' || !userResult.result) {
+      console.error(`❌ StalkUser failed for ${username}:`, JSON.stringify(userResult).substring(0, 300));
       throw new Error('Impossible de récupérer le profil TikTok');
     }
 
