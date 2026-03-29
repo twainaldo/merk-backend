@@ -320,7 +320,9 @@ export default function VideosPage() {
               {/* Account Filters */}
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-gray-500 uppercase font-medium">Account</span>
-                {accounts.map(acc => (
+                {accounts
+                  .filter(acc => selectedPlatforms.has(acc.platform))
+                  .map(acc => (
                   <button
                     key={acc.username}
                     onClick={() => toggleAccount(acc.username)}
@@ -330,11 +332,7 @@ export default function VideosPage() {
                         : "bg-gray-800/50 text-gray-500 border border-gray-700/30 hover:text-gray-300"
                     }`}
                   >
-                    {acc.profile_picture ? (
-                      <img src={acc.profile_picture} alt="" className="w-4 h-4 rounded-full" />
-                    ) : (
-                      <PlatformIcon platform={acc.platform} size="sm" />
-                    )}
+                    <PlatformIcon platform={acc.platform} size="sm" />
                     @{acc.username}
                   </button>
                 ))}
