@@ -43,15 +43,11 @@ export default function AccountsPage() {
   const fetchAccounts = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("accounts")
-        .select("*")
-        .order("created_at", { ascending: false });
+      const res = await fetch(`${API_BASE}/api/accounts`);
+      const data = await res.json();
 
-      if (error) {
-        console.error("Error fetching accounts:", error);
-      } else if (data) {
-        const formattedAccounts: Account[] = data.map((a: any) => ({
+      if (data.accounts) {
+        const formattedAccounts: Account[] = data.accounts.map((a: any) => ({
           id: a.id,
           platform: a.platform.toLowerCase() as Platform,
           username: a.username,
@@ -157,11 +153,11 @@ export default function AccountsPage() {
     }
 
     try {
-      const { error } = await supabase.from("accounts").delete().eq("id", id);
-      if (error) {
-        console.error("Error deleting account:", error);
-      } else {
+      const res = await fetch(`${API_BASE}/api/accounts/${id}`, { method: "DELETE" });
+      if (res.ok) {
         fetchAccounts();
+      } else {
+        console.error("Error deleting account");
       }
     } catch (error) {
       console.error("Error deleting account:", error);
