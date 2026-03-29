@@ -536,7 +536,7 @@ export default function Dashboard() {
                             fontSize: "12px",
                           }}
                           labelStyle={{ color: "#9ca3af" }}
-                          formatter={(value: number, name: string) => [formatNumber(value), name.charAt(0).toUpperCase() + name.slice(1)]}
+                          formatter={(value?: number, name?: string) => [formatNumber(value ?? 0), (name ?? "").charAt(0).toUpperCase() + (name ?? "").slice(1)]}
                         />
                         {chartMetrics.has("views") && (
                           <Area
