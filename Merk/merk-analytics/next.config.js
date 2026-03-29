@@ -42,6 +42,10 @@ const nextConfig = {
         protocol: 'https',
         hostname: '**.twimg.com',
       },
+      {
+        protocol: 'https',
+        hostname: 'pub-eadd1d4ec520455fb50022cc29f20161.r2.dev',
+      },
     ],
   },
 };
