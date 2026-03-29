@@ -1,10 +1,20 @@
 "use client";
 
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { ChartData } from "../types";
 
 interface AnalyticsChartProps {
   data?: ChartData[];
+}
+
+function formatViews(value: number): string {
+  if (value >= 1000000) {
+    return (value / 1000000).toFixed(1) + "M";
+  }
+  if (value >= 1000) {
+    return (value / 1000).toFixed(1) + "K";
+  }
+  return value.toString();
 }
 
 function EmptyState() {
@@ -19,47 +29,93 @@ function EmptyState() {
   );
 }
 
+// Custom tooltip component
+function CustomTooltip({ active, payload, label }: any) {
+  if (active && payload && payload.length) {
+    return (
+      <div className="rounded-lg p-3 border border-gray-700" style={{ backgroundColor: '#1f1f23' }}>
+        <p className="text-gray-400 text-sm mb-2">{label}</p>
+        {payload.map((entry: any, index: number) => (
+          <div key={index} className="flex items-center gap-2 text-sm">
+            <span
+              className="w-3 h-3 rounded-full"
+              style={{ backgroundColor: entry.color }}
+            />
+            <span className="text-gray-400">{entry.name}:</span>
+            <span className="text-white font-semibold">
+              {entry.name === "Views" ? formatViews(entry.value) : entry.value.toLocaleString()}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return null;
+}
+
 export default function AnalyticsChart({ data = [] }: AnalyticsChartProps) {
   return (
-    <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 mb-8">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-6 rounded-xl border border-gray-800/50 mb-8" style={{ backgroundColor: '#18181b' }}>
+      <div className="mb-6">
         <h2 className="text-lg font-semibold text-white">Analytics Overview</h2>
-        <div className="flex gap-2">
-          <button className="px-3 py-1 text-sm bg-purple-500/20 text-purple-400 rounded-lg font-medium">
-            Daily
-          </button>
-          <button className="px-3 py-1 text-sm text-gray-400 hover:bg-gray-800 rounded-lg font-medium">
-            Cumulative
-          </button>
-        </div>
       </div>
 
       {data.length === 0 ? (
         <EmptyState />
       ) : (
-        <div className="relative">
-          {/* Watermark */}
-          <div className="absolute top-2 right-2 flex items-center gap-2 text-gray-600 z-10">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="12" r="10" opacity="0.3"/>
-            </svg>
-            <span className="text-xs font-medium">Merk</span>
-          </div>
-
+        <div>
           <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="date" stroke="#9ca3af" />
-              <YAxis stroke="#9ca3af" />
-              <Tooltip />
+            <ComposedChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+              <XAxis
+                dataKey="date"
+                stroke="#6b7280"
+                tick={{ fill: '#6b7280', fontSize: 12 }}
+                axisLine={{ stroke: '#27272a' }}
+                tickLine={{ stroke: '#27272a' }}
+              />
+              <YAxis
+                yAxisId="left"
+                stroke="#6b7280"
+                tick={{ fill: '#6b7280', fontSize: 12 }}
+                axisLine={{ stroke: '#27272a' }}
+                tickLine={{ stroke: '#27272a' }}
+                tickFormatter={formatViews}
+              />
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                stroke="#6b7280"
+                tick={{ fill: '#6b7280', fontSize: 12 }}
+                axisLine={{ stroke: '#27272a' }}
+                tickLine={{ stroke: '#27272a' }}
+              />
+              <Tooltip content={<CustomTooltip />} />
+              <Legend
+                verticalAlign="top"
+                height={36}
+                iconType="circle"
+                formatter={(value) => <span style={{ color: '#9ca3af' }}>{value}</span>}
+              />
+              <Bar
+                yAxisId="right"
+                dataKey="videos"
+                name="Videos"
+                fill="#f59e0b"
+                radius={[4, 4, 0, 0]}
+                opacity={0.8}
+              />
               <Line
+                yAxisId="left"
                 type="monotone"
                 dataKey="views"
+                name="Views"
                 stroke="#9333ea"
-                strokeWidth={2}
-                dot={{ fill: '#9333ea', r: 4 }}
+                strokeWidth={3}
+                dot={{ fill: '#9333ea', r: 4, strokeWidth: 0 }}
+                activeDot={{ fill: '#9333ea', r: 6, strokeWidth: 0 }}
               />
-            </LineChart>
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
       )}

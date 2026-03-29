@@ -1,10 +1,11 @@
 // Platform Types
-export type Platform = 'tiktok' | 'instagram' | 'youtube' | 'facebook';
+export type Platform = 'tiktok' | 'instagram' | 'youtube' | 'twitter';
 
 // Analytics Chart Types
 export interface ChartData {
   date: string;
   views: number;
+  videos: number;
 }
 
 // Video Types
@@ -37,6 +38,7 @@ export interface Account {
   platform: Platform;
   username: string;
   url: string;
+  profile_picture: string | null;
   created_at: string;
 }
 
@@ -65,4 +67,22 @@ export interface HourlyStats {
 export interface User {
   email: string;
   name?: string;
+}
+
+// Apify Key Types
+export interface ApifyKey {
+  id: number;
+  api_key: string;
+  label: string | null;
+  is_active: boolean;
+  last_used_at: string | null;
+  created_at: string;
+}
+
+// Fetch Status
+export interface FetchStatus {
+  isRunning: boolean;
+  platform: string;
+  progress: { current: number; total: number };
+  errors: string[];
 }

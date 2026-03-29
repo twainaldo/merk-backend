@@ -1,27 +1,32 @@
-// Charger le proxy AVANT tout autre import avec global-agent
+// Charger dotenv et le proxy AVANT tout autre import
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
-// Lire le fichier proxy et configurer global-agent
+// Lire le fichier proxy et configurer global-agent (seulement si USE_PROXIES=true)
 const proxyFile = path.join(__dirname, 'proxies');
 let proxyConfigured = false;
 
-if (fs.existsSync(proxyFile)) {
+if (process.env.USE_PROXIES !== 'false' && fs.existsSync(proxyFile)) {
   const proxyLine = fs.readFileSync(proxyFile, 'utf8').trim().split('\n')[0];
-  if (proxyLine && proxyLine.includes('@')) {
-    const proxyUrl = `http://${proxyLine}`;
+  if (proxyLine) {
+    // Support format user:pass@host:port ET host:port (IP whitelist)
+    const proxyUrl = proxyLine.includes('://') ? proxyLine : `http://${proxyLine}`;
 
     // Configurer global-agent pour intercepter TOUTES les requêtes
     process.env.GLOBAL_AGENT_HTTP_PROXY = proxyUrl;
     process.env.GLOBAL_AGENT_HTTPS_PROXY = proxyUrl;
-    process.env.GLOBAL_AGENT_NO_PROXY = ''; // Pas d'exceptions
+    process.env.GLOBAL_AGENT_NO_PROXY = 'localhost,127.0.0.1'; // Exclure localhost (nécessaire pour Puppeteer DevTools)
 
     // Activer global-agent
     require('global-agent/bootstrap');
 
     proxyConfigured = true;
-    console.log(`🌐 Global-Agent activé avec proxy: http://${proxyLine.split('@')[1]}`);
+    const displayProxy = proxyLine.includes('@') ? proxyLine.split('@')[1] : proxyLine;
+    console.log(`🌐 Global-Agent activé avec proxy: http://${displayProxy}`);
   }
+} else {
+  console.log('🔓 Proxies désactivés (USE_PROXIES=false), scraping en direct');
 }
 
 const { accountQueries, videoQueries, hourlyQueries, supabase } = require('./database-supabase');
@@ -31,7 +36,7 @@ const PQueue = require('p-queue').default;
 const axios = require('axios');
 
 // Configuration
-const SCRAPE_INTERVAL = 10 * 1000; // 10 secondes entre chaque cycle (scraping quasi-continu)
+const SCRAPE_INTERVAL = 5 * 60 * 1000; // 5 minutes entre chaque cycle (Puppeteer prend ~20s/compte)
 const WORKERS = 1; // 1 seul worker pour éviter le rate limiting du proxy
 
 // Note: Les tables sont déjà créées dans Supabase via le schema SQL
@@ -84,7 +89,7 @@ const scrapeTikTokAccountDetailed = async (account, maxRetries = 3) => {
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const proxy = proxyManager.getNextProxy();
+      const proxy = process.env.USE_PROXIES !== 'false' ? proxyManager.getNextProxy() : null;
 
       // Scraper les vidéos détaillées
       const data = await scrapeTikTokDetailed(account.url, proxy);

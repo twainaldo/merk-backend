@@ -4,11 +4,13 @@ const cron = require('node-cron');
 const multer = require('multer');
 const fs = require('fs');
 const cors = require('cors');
-const { accountQueries, hourlyQueries, supabase } = require('./database-supabase');
+const { accountQueries, hourlyQueries, videoQueries, apifyKeyQueries, supabase } = require('./database-supabase');
+const { fetchVideosForAccount, fetchStatsForVideos, getNextApiKey } = require('./apify-scraper');
 const { runWorker, queueManager } = require('./worker');
 const { importFromCSV, importFromText } = require('./import-accounts');
 const { parseBulkAccounts } = require('./platform-detector');
 const ReportGenerator = require('./report-generator');
+const { scrapeProfilePicture } = require('./profile-scraper');
 const proxyManager = require('./proxy-manager');
 
 const app = express();
@@ -46,18 +48,18 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public'));
 app.use('/reports', express.static('reports')); // Servir les rapports
 
 // ============= ROUTES API EXISTANTES =============
 
-// Récupérer tous les comptes (avec pagination)
+// Récupérer tous les comptes (avec pagination et filtrage par user_id)
 app.get('/api/accounts', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 50;
     const offset = (page - 1) * limit;
     const platform = req.query.platform;
+    const userId = req.query.user_id;
 
     let query = supabase
       .from('accounts')
@@ -68,6 +70,9 @@ app.get('/api/accounts', async (req, res) => {
 
     if (platform) {
       query = query.eq('platform', platform);
+    }
+    if (userId) {
+      query = query.eq('user_id', userId);
     }
 
     const { data: accounts, error, count } = await query;
@@ -91,14 +96,38 @@ app.get('/api/accounts', async (req, res) => {
 // Ajouter un compte
 app.post('/api/accounts', async (req, res) => {
   try {
-    const { platform, username, url } = req.body;
+    const { platform, username, url, user_id } = req.body;
 
     if (!platform || !username || !url) {
       return res.status(400).json({ error: 'Tous les champs sont requis' });
     }
 
-    await accountQueries.add.run({ platform, username, url });
+    const result = await accountQueries.add.run({ platform, username, url, user_id });
+    const accountId = result.lastInsertRowid;
+    console.log(`✅ Account added: ${username} (${platform}) id=${accountId}`);
+    addServerLog(`Account added: @${username} (${platform})`);
     res.json({ success: true, message: 'Compte ajouté avec succès' });
+
+    // Scrape profile picture in background
+    scrapeProfilePicture(url, platform).then(async (profilePic) => {
+      console.log(`🔍 Profile pic result for ${username}: ${profilePic ? 'found' : 'not found'}`);
+      if (profilePic) {
+        try {
+          const { error } = await supabase
+            .from('accounts')
+            .update({ profile_picture: profilePic })
+            .eq('id', accountId);
+          if (error) {
+            console.warn(`⚠️ DB error saving profile picture: ${error.message}`);
+          } else {
+            console.log(`📸 Profile picture saved for ${username}`);
+            addServerLog(`Profile picture saved for @${username}`);
+          }
+        } catch (e) {
+          console.warn(`⚠️ Failed to save profile picture: ${e.message}`);
+        }
+      }
+    }).catch(e => console.error(`❌ Profile scrape error for ${username}:`, e.message));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -170,10 +199,17 @@ app.get('/api/stats/:accountId', async (req, res) => {
 // Dashboard global (simplifié - utilise hourly_stats au lieu de daily_stats)
 app.get('/api/dashboard', async (req, res) => {
   try {
-    // Pour Supabase, on récupère les données et on fait l'agrégation côté JS
-    const { data: accounts, error: accountsError } = await supabase
+    const userId = req.query.user_id;
+
+    let accountsQuery = supabase
       .from('accounts')
       .select('id, platform');
+
+    if (userId) {
+      accountsQuery = accountsQuery.eq('user_id', userId);
+    }
+
+    const { data: accounts, error: accountsError } = await accountsQuery;
 
     if (accountsError) throw accountsError;
 
@@ -377,11 +413,19 @@ app.get('/api/proxies/stats', (req, res) => {
 // Récupérer les stats horaires (dernières pour chaque compte)
 app.get('/api/hourly-stats', async (req, res) => {
   try {
-    const { data: accounts, error: accountsError } = await supabase
+    const userId = req.query.user_id;
+
+    let accountsQuery = supabase
       .from('accounts')
       .select('*')
       .order('platform')
       .order('username');
+
+    if (userId) {
+      accountsQuery = accountsQuery.eq('user_id', userId);
+    }
+
+    const { data: accounts, error: accountsError } = await accountsQuery;
 
     if (accountsError) throw accountsError;
 
@@ -459,10 +503,17 @@ app.get('/api/continuous-reports', (req, res) => {
 // Dashboard avec stats horaires
 app.get('/api/dashboard/realtime', async (req, res) => {
   try {
-    // Récupérer tous les comptes
-    const { data: accounts, error: accountsError } = await supabase
+    const userId = req.query.user_id;
+
+    let accountsQuery = supabase
       .from('accounts')
       .select('id, platform');
+
+    if (userId) {
+      accountsQuery = accountsQuery.eq('user_id', userId);
+    }
+
+    const { data: accounts, error: accountsError } = await accountsQuery;
 
     if (accountsError) throw accountsError;
 
@@ -528,6 +579,276 @@ app.get('/api/dashboard/realtime', async (req, res) => {
       summary: Object.values(summary),
       lastReports
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============= SERVER LOGS =============
+
+// In-memory log buffer + SSE clients
+const serverLogs = [];
+const MAX_LOGS = 500;
+const logClients = new Set();
+
+function addServerLog(message, type = 'log') {
+  const entry = { time: new Date().toISOString(), message, type };
+  serverLogs.push(entry);
+  if (serverLogs.length > MAX_LOGS) serverLogs.shift();
+  // Broadcast to all SSE clients
+  for (const client of logClients) {
+    client.write(`data: ${JSON.stringify(entry)}\n\n`);
+  }
+}
+
+// SSE endpoint: stream all server logs in real-time
+app.get('/api/logs/stream', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+
+  // Send existing logs
+  for (const log of serverLogs) {
+    res.write(`data: ${JSON.stringify(log)}\n\n`);
+  }
+
+  logClients.add(res);
+  req.on('close', () => logClients.delete(res));
+});
+
+// ============= APIFY ROUTES =============
+
+// In-memory scraping status
+let apifyStatus = { isRunning: false, platform: '', progress: { current: 0, total: 0 }, errors: [] };
+
+// Fetch videos via Apify (SSE stream for live logs)
+app.get('/api/apify/fetch-videos', async (req, res) => {
+  const platform = req.query.platform;
+  if (!platform) return res.status(400).json({ error: 'Platform is required' });
+
+  if (apifyStatus.isRunning) {
+    return res.status(409).json({ error: 'A scraping job is already running' });
+  }
+
+  // Setup SSE
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+
+  const sendLog = (msg) => {
+    res.write(`data: ${JSON.stringify({ type: 'log', message: msg })}\n\n`);
+    addServerLog(msg);
+  };
+  const sendDone = (msg) => {
+    res.write(`data: ${JSON.stringify({ type: 'done', message: msg })}\n\n`);
+    addServerLog(msg, 'done');
+    res.end();
+  };
+  const sendError = (msg) => {
+    res.write(`data: ${JSON.stringify({ type: 'error', message: msg })}\n\n`);
+    addServerLog(msg, 'error');
+    res.end();
+  };
+
+  try {
+    const keys = await apifyKeyQueries.getAll.all();
+    if (keys.length === 0) {
+      return sendError('No Apify API keys configured. Add keys in Settings.');
+    }
+
+    const platformMap = { tiktok: 'TikTok', instagram: 'Instagram', youtube: 'YouTube', twitter: 'Twitter' };
+    const dbPlatform = platformMap[platform.toLowerCase()] || platform;
+    const accounts = await accountQueries.getByPlatform.all(dbPlatform);
+
+    if (accounts.length === 0) {
+      return sendError(`No accounts found for ${platform}`);
+    }
+
+    apifyStatus = { isRunning: true, platform, progress: { current: 0, total: accounts.length }, errors: [] };
+    sendLog(`Starting fetch for ${accounts.length} ${platform} account(s)...`);
+
+    let totalVideosFetched = 0;
+
+    for (let i = 0; i < accounts.length; i++) {
+      const account = accounts[i];
+      apifyStatus.progress.current = i + 1;
+      sendLog(`[${i + 1}/${accounts.length}] @${account.username} — fetching videos...`);
+
+      try {
+        const allApiKeys = keys.map(k => k.api_key);
+        const videos = await fetchVideosForAccount(allApiKeys, platform.toLowerCase(), account, null, (msg) => sendLog(`[${i + 1}/${accounts.length}] ${msg}`));
+
+        sendLog(`[${i + 1}/${accounts.length}] @${account.username} — ${videos.length} videos fetched, saving...`);
+        let saved = 0;
+        for (const video of videos) {
+          try {
+            await videoQueries.upsertFull.run(video);
+            saved++;
+            if (saved % 100 === 0) {
+              sendLog(`[${i + 1}/${accounts.length}] @${account.username} — ${saved}/${videos.length} saved...`);
+            }
+          } catch (e) {
+            if (saved === 0) sendLog(`[${i + 1}/${accounts.length}] ⚠️ Save error: ${e.message}`);
+          }
+        }
+        totalVideosFetched += saved;
+
+        sendLog(`[${i + 1}/${accounts.length}] @${account.username} — ${saved} videos saved (${totalVideosFetched} total)`);
+
+        // Update hourly stats
+        const totals = await videoQueries.getTotals.get(account.id);
+        const lastStat = await hourlyQueries.getLatest.get(account.id);
+        await hourlyQueries.add.run({
+          account_id: account.id,
+          total_videos: totals.total_videos,
+          total_views: totals.total_views,
+          delta_videos: totals.total_videos - (lastStat?.total_videos || 0),
+          delta_views: totals.total_views - (lastStat?.total_views || 0),
+          followers: 0,
+          likes: 0,
+          platform: dbPlatform,
+          username: account.username,
+        });
+      } catch (e) {
+        sendLog(`[${i + 1}/${accounts.length}] @${account.username} — ERROR: ${e.message}`);
+        apifyStatus.errors.push(`${account.username}: ${e.message}`);
+      }
+    }
+
+    apifyStatus.isRunning = false;
+    sendDone(`Done! ${totalVideosFetched} videos fetched across ${accounts.length} account(s)`);
+  } catch (error) {
+    apifyStatus.isRunning = false;
+    sendError(error.message);
+  }
+});
+
+// Fetch stats (update metrics) via Apify (SSE stream)
+app.get('/api/apify/fetch-stats', async (req, res) => {
+  const platform = req.query.platform;
+  if (!platform) return res.status(400).json({ error: 'Platform is required' });
+
+  if (apifyStatus.isRunning) {
+    return res.status(409).json({ error: 'A scraping job is already running' });
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+
+  const sendLog = (msg) => { res.write(`data: ${JSON.stringify({ type: 'log', message: msg })}\n\n`); addServerLog(msg); };
+  const sendDone = (msg) => { res.write(`data: ${JSON.stringify({ type: 'done', message: msg })}\n\n`); addServerLog(msg, 'done'); res.end(); };
+  const sendError = (msg) => { res.write(`data: ${JSON.stringify({ type: 'error', message: msg })}\n\n`); addServerLog(msg, 'error'); res.end(); };
+
+  try {
+    const keys = await apifyKeyQueries.getAll.all();
+    if (keys.length === 0) return sendError('No Apify API keys configured. Add keys in Settings.');
+
+    const platformMap = { tiktok: 'TikTok', instagram: 'Instagram', youtube: 'YouTube', twitter: 'Twitter' };
+    const dbPlatform = platformMap[platform.toLowerCase()] || platform;
+    const accounts = await accountQueries.getByPlatform.all(dbPlatform);
+
+    if (accounts.length === 0) return sendError(`No accounts found for ${platform}`);
+
+    apifyStatus = { isRunning: true, platform, progress: { current: 0, total: accounts.length }, errors: [] };
+    sendLog(`Starting stats update for ${accounts.length} ${platform} account(s)...`);
+
+    let totalUpdated = 0;
+
+    for (let i = 0; i < accounts.length; i++) {
+      const account = accounts[i];
+      apifyStatus.progress.current = i + 1;
+      sendLog(`[${i + 1}/${accounts.length}] @${account.username} — fetching stats...`);
+
+      try {
+        const allApiKeys = keys.map(k => k.api_key);
+        const videos = await fetchStatsForVideos(allApiKeys, platform.toLowerCase(), account, null, (msg) => sendLog(`[${i + 1}/${accounts.length}] ${msg}`));
+
+        sendLog(`[${i + 1}/${accounts.length}] @${account.username} — ${videos.length} videos fetched, updating...`);
+        let updated = 0;
+        for (const video of videos) {
+          try {
+            await videoQueries.updateMetrics.run(video);
+            updated++;
+            if (updated % 100 === 0) {
+              sendLog(`[${i + 1}/${accounts.length}] @${account.username} — ${updated}/${videos.length} updated...`);
+            }
+          } catch (e) {}
+        }
+        totalUpdated += updated;
+        sendLog(`[${i + 1}/${accounts.length}] @${account.username} — ${updated} videos updated (${totalUpdated} total)`);
+      } catch (e) {
+        sendLog(`[${i + 1}/${accounts.length}] @${account.username} — ERROR: ${e.message}`);
+        apifyStatus.errors.push(`${account.username}: ${e.message}`);
+      }
+    }
+
+    apifyStatus.isRunning = false;
+    sendDone(`Done! ${totalUpdated} videos updated across ${accounts.length} account(s)`);
+  } catch (error) {
+    apifyStatus.isRunning = false;
+    sendError(error.message);
+  }
+});
+
+// Get scraping status
+app.get('/api/apify/status', (req, res) => {
+  res.json(apifyStatus);
+});
+
+// ============= SETTINGS ROUTES =============
+
+// List Apify keys (masked)
+app.get('/api/settings/apify-keys', async (req, res) => {
+  try {
+    const keys = await apifyKeyQueries.getAll.all();
+    const masked = keys.map(k => ({
+      ...k,
+      api_key: k.api_key.length > 8
+        ? k.api_key.slice(0, 4) + '****' + k.api_key.slice(-4)
+        : '****',
+    }));
+    res.json({ keys: masked, count: keys.length, max: 100 });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add Apify key
+app.post('/api/settings/apify-keys', async (req, res) => {
+  try {
+    const { api_key, label } = req.body;
+    if (!api_key) return res.status(400).json({ error: 'API key is required' });
+
+    const existing = await apifyKeyQueries.getAll.all();
+    if (existing.length >= 100) {
+      return res.status(400).json({ error: 'Maximum 100 keys allowed' });
+    }
+
+    const key = await apifyKeyQueries.add.run({ api_key, label });
+    res.json({ success: true, key: { ...key, api_key: key.api_key.slice(0, 4) + '****' + key.api_key.slice(-4) } });
+  } catch (error) {
+    if (error.message?.includes('unique') || error.code === '23505') {
+      return res.status(400).json({ error: 'This API key already exists' });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete Apify key
+app.delete('/api/settings/apify-keys/:id', async (req, res) => {
+  try {
+    await apifyKeyQueries.delete.run(req.params.id);
+    res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

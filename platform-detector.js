@@ -22,9 +22,9 @@ const detectPlatform = (url) => {
     return 'Instagram';
   }
 
-  // Facebook
-  if (urlLower.includes('facebook.com') || urlLower.includes('fb.com')) {
-    return 'Facebook';
+  // Twitter / X
+  if (urlLower.includes('twitter.com') || urlLower.includes('x.com')) {
+    return 'Twitter';
   }
 
   throw new Error(`Plateforme non reconnue pour l'URL: ${url}`);
@@ -59,10 +59,10 @@ const extractUsername = (url, platform) => {
         const instaMatch = pathname.match(/\/([^/]+)/);
         return instaMatch && instaMatch[1] !== 'p' ? instaMatch[1] : null;
 
-      case 'Facebook':
-        // https://www.facebook.com/username
-        const fbMatch = pathname.match(/\/([^/]+)/);
-        return fbMatch ? fbMatch[1] : null;
+      case 'Twitter':
+        // https://twitter.com/username or https://x.com/username
+        const twMatch = pathname.match(/\/([^/]+)/);
+        return twMatch && twMatch[1] !== 'search' ? '@' + twMatch[1] : null;
 
       default:
         return null;
@@ -182,7 +182,7 @@ Plateformes détectées automatiquement:
 - TikTok (tiktok.com)
 - YouTube (youtube.com, youtu.be)
 - Instagram (instagram.com)
-- Facebook (facebook.com, fb.com)
+- Twitter / X (twitter.com, x.com)
 `;
 
 module.exports = {

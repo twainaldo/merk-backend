@@ -27,6 +27,20 @@ const accountQueries = {
     }
   },
 
+  // Récupérer les comptes d'un utilisateur
+  getByUserId: {
+    all: async (userId) => {
+      const { data, error } = await supabase
+        .from('accounts')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      return data || [];
+    }
+  },
+
   // Récupérer par platform
   getByPlatform: {
     all: async (platform) => {
@@ -58,13 +72,16 @@ const accountQueries = {
   // Ajouter un compte
   add: {
     run: async (params) => {
+      const insertData = {
+        platform: params.platform,
+        username: params.username,
+        url: params.url
+      };
+      if (params.user_id) insertData.user_id = params.user_id;
+
       const { data, error } = await supabase
         .from('accounts')
-        .insert({
-          platform: params.platform,
-          username: params.username,
-          url: params.url
-        })
+        .insert(insertData)
         .select()
         .single();
 
@@ -303,9 +320,65 @@ const hourlyQueries = {
   }
 };
 
+// Queries pour les clés Apify
+const apifyKeyQueries = {
+  getAll: {
+    all: async () => {
+      const { data, error } = await supabase
+        .from('apify_keys')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      return data || [];
+    }
+  },
+
+  add: {
+    run: async (params) => {
+      const { data, error } = await supabase
+        .from('apify_keys')
+        .insert({
+          api_key: params.api_key,
+          label: params.label || null
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    }
+  },
+
+  delete: {
+    run: async (id) => {
+      const { error } = await supabase
+        .from('apify_keys')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      return { changes: 1 };
+    }
+  },
+
+  updateLastUsed: {
+    run: async (id) => {
+      const { error } = await supabase
+        .from('apify_keys')
+        .update({ last_used_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (error) throw error;
+    }
+  }
+};
+
 module.exports = {
   supabase,
   accountQueries,
   videoQueries,
-  hourlyQueries
+  hourlyQueries,
+  apifyKeyQueries
 };

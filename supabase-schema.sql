@@ -7,11 +7,14 @@ CREATE TABLE IF NOT EXISTS accounts (
   platform TEXT NOT NULL,
   username TEXT NOT NULL,
   url TEXT NOT NULL UNIQUE,
+  profile_picture TEXT,
+  user_id UUID,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Index sur platform pour les requêtes filtrées
 CREATE INDEX IF NOT EXISTS idx_accounts_platform ON accounts(platform);
+CREATE INDEX IF NOT EXISTS idx_accounts_user_id ON accounts(user_id);
 
 -- Table: videos
 CREATE TABLE IF NOT EXISTS videos (
@@ -64,6 +67,16 @@ CREATE TABLE IF NOT EXISTS hourly_stats (
 CREATE INDEX IF NOT EXISTS idx_hourly_stats_timestamp ON hourly_stats(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_hourly_stats_account ON hourly_stats(account_id);
 
+-- Table: apify_keys
+CREATE TABLE IF NOT EXISTS apify_keys (
+  id BIGSERIAL PRIMARY KEY,
+  api_key TEXT NOT NULL UNIQUE,
+  label TEXT,
+  is_active BOOLEAN DEFAULT true,
+  last_used_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Enable Row Level Security (RLS) - Optionnel si tu veux gérer les permissions
 ALTER TABLE accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE videos ENABLE ROW LEVEL SECURITY;
@@ -74,3 +87,5 @@ ALTER TABLE hourly_stats ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Enable all access for service role" ON accounts FOR ALL USING (true);
 CREATE POLICY "Enable all access for service role" ON videos FOR ALL USING (true);
 CREATE POLICY "Enable all access for service role" ON hourly_stats FOR ALL USING (true);
+ALTER TABLE apify_keys ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Enable all access for service role" ON apify_keys FOR ALL USING (true);

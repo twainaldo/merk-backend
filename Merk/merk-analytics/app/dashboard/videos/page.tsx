@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
@@ -48,7 +48,7 @@ function VideoRow({ video, index }: VideoRowProps) {
     : "0.00";
 
   return (
-    <tr className="border-b border-gray-800/50 hover:bg-gray-900/50 transition-colors">
+    <tr className="border-b border-gray-800/30 hover:bg-white/5 transition-colors">
       {/* Rank */}
       <td className="py-4 px-4">
         <span className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
@@ -102,8 +102,8 @@ function VideoRow({ video, index }: VideoRowProps) {
           </div>
 
           {/* Video Details */}
-          <div className="min-w-0">
-            <p className="font-semibold text-white text-sm">@{video.handle}</p>
+          <div className="min-w-0 max-w-[250px]">
+            <p className="font-semibold text-white text-sm">@{video.handle.replace(/^@/, '')}</p>
             <p className="text-xs text-gray-400 truncate max-w-xs mt-1">
               {video.description || "No description"}
             </p>
@@ -122,7 +122,7 @@ function VideoRow({ video, index }: VideoRowProps) {
       {/* Views */}
       <td className="py-4 px-4">
         <div className="flex items-center gap-2">
-          <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
           </svg>
@@ -186,57 +186,58 @@ function VideoRow({ video, index }: VideoRowProps) {
 export default function VideosPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [userEmail, setUserEmail] = useState<string>("");
-  const [selectedPlatform, setSelectedPlatform] = useState<Platform | null>(null);
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortField, setSortField] = useState<SortField>("views");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [searchTerm, setSearchTerm] = useState("");
-  const supabase = createClient();
+  const [totalCount, setTotalCount] = useState(0);
+  const [visibleCount, setVisibleCount] = useState(100);
+  const loaderRef = useRef<HTMLDivElement>(null);
 
-  // Fetch user
+  // Reset visible count when search/sort changes
+  useEffect(() => { setVisibleCount(100); }, [searchTerm, sortField, sortOrder]);
+
+  // Infinite scroll observer
   useEffect(() => {
-    const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user?.email) {
-        setUserEmail(user.email);
-      }
-    };
-    getUser();
-  }, []);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setVisibleCount((prev) => prev + 100);
+        }
+      },
+      { threshold: 0.1 }
+    );
+    if (loaderRef.current) observer.observe(loaderRef.current);
+    return () => observer.disconnect();
+  }, [loaderRef.current, visibleCount]);
+  const supabase = createClient();
 
   // Fetch all videos from Supabase
   useEffect(() => {
     const fetchVideos = async () => {
       setLoading(true);
       try {
+        // Fetch top 1000 videos for display + total count
+        const { count } = await supabase
+          .from("videos")
+          .select("id", { count: "exact", head: true });
+
         const { data: videosData, error } = await supabase
           .from("videos")
           .select(`
-            id,
-            video_id,
-            video_url,
-            views,
-            likes,
-            comments,
-            shares,
-            saves,
-            duration,
-            published_date,
-            description,
-            hashtags,
-            thumbnail_url,
-            accounts (
-              id,
-              platform,
-              username
-            )
+            id, video_id, video_url, views, likes, comments, shares, saves,
+            duration, published_date, description, hashtags, thumbnail_url,
+            accounts ( id, platform, username )
           `)
-          .order("views", { ascending: false });
+          .order("views", { ascending: false })
+          .limit(1000);
+
+        setTotalCount(count || 0);
 
         if (error) {
           console.error("Error fetching videos:", error);
-        } else if (videosData) {
+        } else if (videosData && videosData.length > 0) {
           const formattedVideos: Video[] = videosData.map((v: any) => ({
             id: v.id,
             video_id: v.video_id || "",
@@ -274,11 +275,6 @@ export default function VideosPage() {
   // Filter and sort videos
   const filteredAndSortedVideos = useMemo(() => {
     let result = [...videos];
-
-    // Filter by platform
-    if (selectedPlatform) {
-      result = result.filter((v) => v.platform === selectedPlatform);
-    }
 
     // Filter by search term
     if (searchTerm) {
@@ -329,7 +325,7 @@ export default function VideosPage() {
     });
 
     return result;
-  }, [videos, selectedPlatform, searchTerm, sortField, sortOrder]);
+  }, [videos, searchTerm, sortField, sortOrder]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -362,15 +358,11 @@ export default function VideosPage() {
   );
 
   return (
-    <div className="flex h-screen bg-gray-950">
+    <div className="flex h-screen" style={{ backgroundColor: '#111114' }}>
       <Sidebar isOpen={sidebarOpen} userEmail={userEmail} />
 
-      <main className="flex-1 overflow-auto bg-gray-950">
-        <Header
-          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
-          selectedPlatform={selectedPlatform}
-          onPlatformChange={setSelectedPlatform}
-        />
+      <main className="flex-1 overflow-auto" style={{ backgroundColor: '#111114' }}>
+        <Header onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
 
         <div className="p-6">
           {/* Page Header */}
@@ -378,7 +370,7 @@ export default function VideosPage() {
             <div>
               <h1 className="text-2xl font-bold text-white">All Videos</h1>
               <p className="text-sm text-gray-400 mt-1">
-                {filteredAndSortedVideos.length} videos tracked
+                {totalCount.toLocaleString()} videos tracked{totalCount > 1000 ? ` (showing top 1,000)` : ""}
               </p>
             </div>
 
@@ -402,13 +394,13 @@ export default function VideosPage() {
                 placeholder="Search videos..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 bg-gray-900 border border-gray-800 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 w-64"
+                className="pl-10 pr-4 py-2 border border-gray-800/50 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-purple-500/50 w-64" style={{ backgroundColor: '#1f1f23' }}
               />
             </div>
           </div>
 
           {/* Videos Table */}
-          <div className="bg-gray-900/30 backdrop-blur-sm rounded-2xl border border-gray-800/50 overflow-hidden">
+          <div className="rounded-2xl border border-gray-800/30 overflow-hidden" style={{ backgroundColor: '#18181b' }}>
             {loading ? (
               <div className="flex items-center justify-center py-20">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500"></div>
@@ -434,14 +426,15 @@ export default function VideosPage() {
                 </p>
               </div>
             ) : (
+              <>
               <div className="overflow-x-auto">
                 <table className="w-full">
-                  <thead className="bg-gray-900/50 border-b border-gray-800">
+                  <thead className="border-b border-gray-800/50" style={{ backgroundColor: '#1f1f23' }}>
                     <tr>
-                      <th className="py-3 px-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      <th className="py-3 px-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-12">
                         #
                       </th>
-                      <th className="py-3 px-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                      <th className="py-3 px-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-80">
                         Video
                       </th>
                       <SortHeader field="uploadDate" label="Uploaded" />
@@ -456,13 +449,25 @@ export default function VideosPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredAndSortedVideos.map((video, index) => (
+                    {filteredAndSortedVideos.slice(0, visibleCount).map((video, index) => (
                       <VideoRow key={video.id} video={video} index={index} />
                     ))}
                   </tbody>
                 </table>
               </div>
-            )}
+              {visibleCount < filteredAndSortedVideos.length && (
+                <div
+                  ref={loaderRef}
+                  className="flex items-center justify-center py-6"
+                >
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-500"></div>
+                  <span className="ml-3 text-sm text-gray-500">
+                    Showing {Math.min(visibleCount, filteredAndSortedVideos.length).toLocaleString()} of {filteredAndSortedVideos.length.toLocaleString()}
+                  </span>
+                </div>
+              )}
+            </>
+          )}
           </div>
         </div>
       </main>

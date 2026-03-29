@@ -23,16 +23,14 @@ function formatValue(value: number | string): string {
 function StatCard({ title, value, period = "Last 7 Days", highlighted = false }: StatCardProps) {
   return (
     <div
-      className={`bg-gray-900/50 backdrop-blur-sm p-5 rounded-xl transition-all duration-200 hover:bg-gray-900 ${
+      className={`p-4 rounded-xl border ${
         highlighted
-          ? "border-2 border-purple-500/50 shadow-lg shadow-purple-500/10"
-          : "border border-gray-800/50 hover:border-gray-700"
+          ? "border-purple-500/30"
+          : "border-gray-800/30"
       }`}
+      style={{ backgroundColor: '#18181b' }}
     >
-      <div className="flex items-center justify-between mb-3">
-        <p className="text-sm text-gray-400 font-medium">{title}</p>
-        {period && <span className="text-[10px] text-gray-600 font-medium">{period}</span>}
-      </div>
+      <p className="text-sm text-gray-400 font-medium mb-1">{title}</p>
       <p className="text-2xl font-bold text-white">{formatValue(value)}</p>
     </div>
   );
@@ -44,6 +42,7 @@ interface StatsCardsProps {
 
 export default function StatsCards({ stats }: StatsCardsProps) {
   const defaultStats: Stat[] = [
+    { title: "Videos Posted", value: 0, period: "Last 7 Days" },
     { title: "Views", value: 0, period: "Last 7 Days" },
     { title: "Engagement", value: "0%", period: "Last 7 Days" },
     { title: "Likes", value: 0, period: "Last 7 Days" },
@@ -55,7 +54,7 @@ export default function StatsCards({ stats }: StatsCardsProps) {
   const displayStats = stats && stats.length > 0 ? stats : defaultStats;
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+    <div className="grid grid-cols-7 gap-3">
       {displayStats.map((stat, index) => (
         <StatCard
           key={stat.title}

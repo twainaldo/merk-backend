@@ -2,11 +2,26 @@ const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const fs = require('fs');
 const { HttpProxyAgent } = require('http-proxy-agent');
 const { HttpsProxyAgent } = require('https-proxy-agent');
-const { GetUserPosts, StalkUser } = require('@tobyg74/tiktok-api-dl');
+const { StalkUser } = require('@tobyg74/tiktok-api-dl');
 
 puppeteer.use(StealthPlugin());
+
+// Détecter le chemin Chrome selon l'OS
+const getChromePath = () => {
+  const paths = [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', // macOS
+    '/usr/bin/google-chrome-stable', // Linux (Railway/Docker)
+    '/usr/bin/google-chrome',        // Linux alt
+    '/usr/bin/chromium-browser',     // Linux Chromium
+  ];
+  for (const p of paths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return undefined; // Puppeteer default
+};
 
 // Configuration du navigateur
 const getBrowser = async (proxy = null) => {
@@ -94,89 +109,152 @@ const scrapeTikTok = async (url, proxy = null) => {
   }
 };
 
-// Scraper TikTok détaillé - Retourne les données complètes de chaque vidéo
+// Scraper TikTok détaillé - Utilise Puppeteer pour capturer les données vidéo via interception API
 const scrapeTikTokDetailed = async (url, proxy = null) => {
+  const username = url.split('@')[1]?.split('/')[0]?.split('?')[0];
+  if (!username) {
+    throw new Error('Username non trouvé dans l\'URL');
+  }
+
+  let browser;
   try {
-    // Extraire le username depuis l'URL
-    const username = url.split('@')[1]?.split('/')[0]?.split('?')[0];
-    if (!username) {
-      throw new Error('Username non trouvé dans l\'URL');
-    }
+    // Lancer Puppeteer sans proxy (le stealth plugin suffit, le proxy cause des 502)
+    const args = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-dev-shm-usage'
+    ];
 
-    // Préparer les options avec le proxy
-    const options = {};
-    if (proxy) {
-      if (proxy.username && proxy.password) {
-        options.proxy = `http://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`;
-        console.log(`🌐 TikTok scraping via proxy: http://${proxy.username}:***@${proxy.host}:${proxy.port}`);
-      } else {
-        options.proxy = `http://${proxy.host}:${proxy.port}`;
-        console.log(`🌐 TikTok scraping via proxy: ${options.proxy}`);
+    console.log(`🌐 TikTok Puppeteer scraping @${username} (direct, stealth mode)`);
+
+    const chromePath = getChromePath();
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args,
+      ...(chromePath && { executablePath: chromePath })
+    });
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1920, height: 1080 });
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+    // Intercepter les réponses API pour capturer les données vidéo
+    const capturedVideos = [];
+    page.on('response', async (response) => {
+      const responseUrl = response.url();
+      if (responseUrl.includes('api/post/item_list')) {
+        try {
+          const json = await response.json();
+          if (json.itemList && json.itemList.length > 0) {
+            capturedVideos.push(...json.itemList);
+          }
+        } catch (e) {}
       }
+    });
+
+    // Naviguer vers le profil
+    await page.goto(`https://www.tiktok.com/@${username}`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
+    });
+
+    // Attendre l'hydratation React et le chargement initial des vidéos
+    await new Promise(r => setTimeout(r, 5000));
+
+    // Extraire les stats du profil depuis __UNIVERSAL_DATA_FOR_REHYDRATION__
+    const profileData = await page.evaluate(() => {
+      const script = document.querySelector('#__UNIVERSAL_DATA_FOR_REHYDRATION__');
+      if (!script) return null;
+      try {
+        const data = JSON.parse(script.textContent);
+        const userInfo = data['__DEFAULT_SCOPE__']?.['webapp.user-detail']?.userInfo;
+        if (!userInfo) return null;
+        return {
+          followers: userInfo.stats?.followerCount || 0,
+          likes: userInfo.stats?.heartCount || 0,
+          videoCount: userInfo.stats?.videoCount || 0
+        };
+      } catch (e) { return null; }
+    });
+
+    if (!profileData) {
+      throw new Error('Impossible de récupérer le profil TikTok via Puppeteer');
     }
 
-    // 1. Récupérer les stats du profil avec StalkUser
-    const userResult = await StalkUser(username, options);
-
-    if (userResult.status !== 'success' || !userResult.result) {
-      console.error(`❌ StalkUser failed for ${username}:`, JSON.stringify(userResult).substring(0, 300));
-      throw new Error('Impossible de récupérer le profil TikTok');
-    }
-
-    const userStats = userResult.result.stats;
     const profileStats = {
-      followers: userStats?.followerCount || 0,
-      likes: userStats?.heartCount || 0
+      followers: profileData.followers,
+      likes: profileData.likes
     };
 
-    // 2. Récupérer toutes les vidéos disponibles
-    const postsResult = await GetUserPosts(username, 0, 35, options);
-
-    if (postsResult.status !== 'success' || !postsResult.result) {
-      throw new Error('Impossible de récupérer les posts TikTok');
+    // Scroller pour charger plus de vidéos (2 scrolls = ~35 vidéos)
+    for (let i = 0; i < 2; i++) {
+      await page.evaluate(() => window.scrollBy(0, 1000));
+      await new Promise(r => setTimeout(r, 3000));
     }
 
-    const videos = postsResult.result || [];
+    await browser.close();
+    browser = null;
 
-    // 3. Extraire les détails de chaque vidéo
-    const detailedVideos = videos.map(video => {
-      // Extraire les hashtags depuis la description
-      const description = video?.desc || video?.title || '';
+    // Transformer les vidéos capturées
+    const detailedVideos = capturedVideos.map(video => {
+      const description = video?.desc || '';
       const hashtags = description.match(/#\w+/g)?.join(' ') || '';
-
-      // Construire l'URL de la vidéo
       const videoId = video?.id || '';
-      const videoUrl = videoId ? `https://www.tiktok.com/@${username}/video/${videoId}` : '';
 
       return {
-        video_url: videoUrl,
+        video_url: videoId ? `https://www.tiktok.com/@${username}/video/${videoId}` : '',
         video_id: videoId,
-
-        // Metrics
         views: video?.stats?.playCount || 0,
         likes: video?.stats?.diggCount || 0,
         comments: video?.stats?.commentCount || 0,
         shares: video?.stats?.shareCount || 0,
         saves: video?.stats?.collectCount || 0,
-
-        // Content metadata
-        duration: video?.music?.duration || 0,
+        duration: video?.video?.duration || video?.music?.duration || 0,
         published_date: video?.createTime || null,
         description: description,
         hashtags: hashtags,
         audio_name: video?.music?.title || '',
         audio_url: video?.music?.playUrl || '',
-        thumbnail_url: video?.imagePost?.[0] || video?.video?.cover || ''
+        thumbnail_url: video?.video?.cover || ''
       };
     });
+
+    console.log(`📹 @${username}: ${detailedVideos.length} vidéos capturées via Puppeteer`);
 
     return {
       profileStats,
       videos: detailedVideos,
-      totalVideos: videos.length
+      totalVideos: profileData.videoCount || detailedVideos.length
     };
   } catch (error) {
-    console.error('Erreur TikTok detailed scraping:', error.message);
+    if (browser) await browser.close().catch(() => {});
+
+    // Fallback: utiliser StalkUser pour les stats profil seulement
+    console.log(`⚠️ Puppeteer failed for @${username}: ${error.message}, trying StalkUser fallback...`);
+    try {
+      const options = {};
+      if (proxy) {
+        options.proxy = proxy.username && proxy.password
+          ? `http://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`
+          : `http://${proxy.host}:${proxy.port}`;
+      }
+
+      const userResult = await StalkUser(username, options);
+      if (userResult.status === 'success' && userResult.result) {
+        const userStats = userResult.result.stats;
+        return {
+          profileStats: {
+            followers: userStats?.followerCount || 0,
+            likes: userStats?.heartCount || 0
+          },
+          videos: [],
+          totalVideos: userStats?.videoCount || 0
+        };
+      }
+    } catch (fallbackError) {
+      console.error(`❌ StalkUser fallback also failed for @${username}: ${fallbackError.message}`);
+    }
+
     throw error;
   }
 };

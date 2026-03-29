@@ -4,27 +4,43 @@ const nextConfig = {
     remotePatterns: [
       {
         protocol: 'https',
-        hostname: '*.tiktokcdn.com',
+        hostname: '**.tiktokcdn.com',
       },
       {
         protocol: 'https',
-        hostname: '*.tiktokcdn-us.com',
+        hostname: '**.tiktokcdn-us.com',
       },
       {
         protocol: 'https',
-        hostname: 'p16-sign-va.tiktokcdn.com',
+        hostname: '**.tiktokcdn-eu.com',
       },
       {
         protocol: 'https',
-        hostname: 'p16-sign.tiktokcdn-us.com',
+        hostname: '**.akamaized.net',
       },
       {
         protocol: 'https',
-        hostname: 'p77-sign.tiktokcdn-us.com',
+        hostname: '**.cdninstagram.com',
       },
       {
         protocol: 'https',
-        hostname: '*.akamaized.net',
+        hostname: '**.fbcdn.net',
+      },
+      {
+        protocol: 'https',
+        hostname: 'i.ytimg.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'yt3.ggpht.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'pbs.twimg.com',
+      },
+      {
+        protocol: 'https',
+        hostname: '**.twimg.com',
       },
     ],
   },

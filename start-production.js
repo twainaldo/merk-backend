@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { spawn } = require('child_process');
 
 console.log('🚀 Starting Merk Analytics in Production Mode...\n');

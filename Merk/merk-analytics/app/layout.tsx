@@ -9,7 +9,11 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "Merk - Social Media Analytics Dashboard",
-  description: "Analyze short-form performance from TikTok, Instagram, YouTube, and Facebook in one unified dashboard",
+  description: "Analyze short-form performance from TikTok, Instagram, YouTube, and Twitter in one unified dashboard",
+  icons: {
+    icon: '/icon.png',
+    apple: '/apple-touch-icon.png',
+  },
 };
 
 export default function RootLayout({

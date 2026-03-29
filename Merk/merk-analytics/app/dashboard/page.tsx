@@ -1,70 +1,143 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
-import StatsCards from "./components/StatsCards";
-import AnalyticsChart from "./components/AnalyticsChart";
+import PlatformIcon from "./components/PlatformIcon";
 import ViralVideos from "./components/ViralVideos";
-import { Platform, Video, ChartData, Stat } from "./types";
+import { Video, Platform, Account } from "./types";
+
+type Period = "1d" | "3d" | "7d" | "14d" | "21d" | "1m" | "3m" | "6m" | "12m" | "all";
+
+const PERIODS: { key: Period; label: string; short: string }[] = [
+  { key: "1d", label: "Today", short: "1D" },
+  { key: "3d", label: "3 Days", short: "3D" },
+  { key: "7d", label: "7 Days", short: "7D" },
+  { key: "14d", label: "14 Days", short: "14D" },
+  { key: "21d", label: "21 Days", short: "21D" },
+  { key: "1m", label: "1 Month", short: "1M" },
+  { key: "3m", label: "3 Months", short: "3M" },
+  { key: "6m", label: "6 Months", short: "6M" },
+  { key: "12m", label: "12 Months", short: "12M" },
+  { key: "all", label: "Since Jan 2025", short: "ALL" },
+];
+
+function getPeriodDate(period: Period): Date {
+  const now = new Date();
+  switch (period) {
+    case "1d": { const d = new Date(); d.setDate(d.getDate() - 1); return d; }
+    case "3d": { const d = new Date(); d.setDate(d.getDate() - 3); return d; }
+    case "7d": { const d = new Date(); d.setDate(d.getDate() - 7); return d; }
+    case "14d": { const d = new Date(); d.setDate(d.getDate() - 14); return d; }
+    case "21d": { const d = new Date(); d.setDate(d.getDate() - 21); return d; }
+    case "1m": { const d = new Date(); d.setMonth(d.getMonth() - 1); return d; }
+    case "3m": { const d = new Date(); d.setMonth(d.getMonth() - 3); return d; }
+    case "6m": { const d = new Date(); d.setMonth(d.getMonth() - 6); return d; }
+    case "12m": { const d = new Date(); d.setMonth(d.getMonth() - 12); return d; }
+    case "all": return new Date("2025-01-01");
+  }
+}
+
+function formatNumber(num: number): string {
+  if (num >= 1000000) return (num / 1000000).toFixed(1) + "M";
+  if (num >= 1000) return (num / 1000).toFixed(1) + "K";
+  return num.toLocaleString();
+}
+
+interface PeriodStats {
+  videos: number;
+  views: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  engagement: string;
+  avgViewsPerVideo: number;
+  avgLikesPerVideo: number;
+  videosPerDay: string;
+}
+
+function calcStats(videos: Video[], period: Period): PeriodStats {
+  const views = videos.reduce((s, v) => s + v.stats.views, 0);
+  const likes = videos.reduce((s, v) => s + v.stats.likes, 0);
+  const comments = videos.reduce((s, v) => s + v.stats.comments, 0);
+  const shares = videos.reduce((s, v) => s + v.stats.shares, 0);
+  const saves = videos.reduce((s, v) => s + v.stats.saves, 0);
+  const engagement = views > 0
+    ? ((likes + comments + shares) / views * 100).toFixed(2)
+    : "0.00";
+  const avgViewsPerVideo = videos.length > 0 ? Math.round(views / videos.length) : 0;
+  const avgLikesPerVideo = videos.length > 0 ? Math.round(likes / videos.length) : 0;
+
+  // Calculate days in period
+  const cutoff = getPeriodDate(period);
+  const now = new Date();
+  const days = Math.max(1, Math.round((now.getTime() - cutoff.getTime()) / (1000 * 60 * 60 * 24)));
+  const videosPerDay = (videos.length / days).toFixed(1);
+
+  return { videos: videos.length, views, likes, comments, shares, saves, engagement, avgViewsPerVideo, avgLikesPerVideo, videosPerDay };
+}
 
 export default function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [userEmail, setUserEmail] = useState<string>("");
-  const [selectedPlatform, setSelectedPlatform] = useState<Platform | null>(null);
-  const [videos, setVideos] = useState<Video[]>([]);
-  const [chartData, setChartData] = useState<ChartData[]>([]);
-  const [stats, setStats] = useState<Stat[]>([]);
+  const [allVideos, setAllVideos] = useState<Video[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set(["tiktok", "instagram", "youtube", "twitter"]));
+  const [selectedAccounts, setSelectedAccounts] = useState<Set<string>>(new Set());
+  const [allAccountsSelected, setAllAccountsSelected] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [activePeriod, setActivePeriod] = useState<Period>("all");
+  const [showFilters, setShowFilters] = useState(false);
   const supabase = createClient();
 
-  // Fetch user
-  useEffect(() => {
-    const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user?.email) {
-        setUserEmail(user.email);
-      }
-    };
-    getUser();
-  }, []);
-
-  // Fetch videos and stats from Supabase
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
-        // Fetch videos with account info
-        const { data: videosData, error: videosError } = await supabase
-          .from("videos")
-          .select(`
-            id,
-            video_id,
-            video_url,
-            views,
-            likes,
-            comments,
-            shares,
-            saves,
-            duration,
-            published_date,
-            description,
-            hashtags,
-            thumbnail_url,
-            accounts (
-              id,
-              platform,
-              username
-            )
-          `)
-          .order("views", { ascending: false })
-          .limit(50);
+        // Fetch accounts
+        const { data: accountsData } = await supabase
+          .from("accounts")
+          .select("*")
+          .order("platform");
+        if (accountsData) {
+          const accs = accountsData.map((a: any) => ({
+            id: a.id,
+            platform: a.platform.toLowerCase() as Platform,
+            username: a.username,
+            url: a.url,
+            profile_picture: a.profile_picture || null,
+            created_at: a.created_at,
+          }));
+          setAccounts(accs);
+          setSelectedAccounts(new Set(accs.map((a: Account) => a.username)));
+        }
 
-        if (videosError) {
-          console.error("Error fetching videos:", videosError);
-        } else if (videosData) {
-          const formattedVideos: Video[] = videosData.map((v: any) => ({
+        // Fetch ALL videos with pagination (no limit)
+        let videosData: any[] = [];
+        let from = 0;
+        const BATCH = 1000;
+        while (true) {
+          const { data, error: fetchErr } = await supabase
+            .from("videos")
+            .select(`
+              id, video_id, video_url, views, likes, comments, shares, saves,
+              duration, published_date, description, hashtags, thumbnail_url,
+              accounts ( id, platform, username )
+            `)
+            .order("views", { ascending: false })
+            .range(from, from + BATCH - 1);
+
+          if (fetchErr) { console.error("Error fetching videos:", fetchErr); break; }
+          if (!data || data.length === 0) break;
+          videosData = videosData.concat(data);
+          if (data.length < BATCH) break;
+          from += BATCH;
+        }
+
+        if (videosData.length > 0) {
+          setAllVideos(videosData.map((v: any) => ({
             id: v.id,
             video_id: v.video_id || "",
             video_url: v.video_url || "",
@@ -85,77 +158,160 @@ export default function Dashboard() {
                 ? Number((((v.likes || 0) + (v.comments || 0) + (v.shares || 0)) / v.views * 100).toFixed(2))
                 : 0,
             },
-          }));
-          setVideos(formattedVideos);
-
-          // Calculate total stats
-          const totalViews = formattedVideos.reduce((sum, v) => sum + v.stats.views, 0);
-          const totalLikes = formattedVideos.reduce((sum, v) => sum + v.stats.likes, 0);
-          const totalComments = formattedVideos.reduce((sum, v) => sum + v.stats.comments, 0);
-          const totalShares = formattedVideos.reduce((sum, v) => sum + v.stats.shares, 0);
-          const totalSaves = formattedVideos.reduce((sum, v) => sum + v.stats.saves, 0);
-          const avgEngagement = totalViews > 0
-            ? ((totalLikes + totalComments + totalShares) / totalViews * 100).toFixed(2)
-            : "0.00";
-
-          setStats([
-            { title: "Views", value: totalViews, period: "Last 7 Days" },
-            { title: "Engagement", value: `${avgEngagement}%`, period: "Last 7 Days" },
-            { title: "Likes", value: totalLikes, period: "Last 7 Days" },
-            { title: "Comments", value: totalComments, period: "Last 7 Days" },
-            { title: "Shares", value: totalShares, period: "Last 7 Days" },
-            { title: "Saves", value: totalSaves, period: "Last 7 Days" },
-          ]);
-        }
-
-        // Fetch hourly stats for chart
-        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-        const { data: hourlyData, error: hourlyError } = await supabase
-          .from("hourly_stats")
-          .select("timestamp, total_views, delta_views")
-          .gte("timestamp", sevenDaysAgo)
-          .order("timestamp", { ascending: true });
-
-        if (hourlyError) {
-          console.error("Error fetching hourly stats:", hourlyError);
-        } else if (hourlyData && hourlyData.length > 0) {
-          // Group by day
-          const byDay: Record<string, { views: number; count: number }> = {};
-          hourlyData.forEach((stat: any) => {
-            const day = stat.timestamp.split("T")[0];
-            if (!byDay[day]) {
-              byDay[day] = { views: 0, count: 0 };
-            }
-            byDay[day].views += stat.total_views || 0;
-            byDay[day].count++;
-          });
-
-          const chartDataFormatted: ChartData[] = Object.entries(byDay).map(([date, data]) => ({
-            date,
-            views: Math.round(data.views / data.count),
-          }));
-          setChartData(chartDataFormatted);
+          })));
         }
       } catch (error) {
-        console.error("Error fetching data:", error);
+        console.error("Error:", error);
       } finally {
         setLoading(false);
       }
     };
-
     fetchData();
   }, []);
 
-  return (
-    <div className="flex h-screen bg-gray-950">
-      <Sidebar isOpen={sidebarOpen} userEmail={userEmail} />
+  // Base filtered videos (by platform + account selection)
+  const baseFilteredVideos = useMemo(() => {
+    return allVideos.filter((v) => {
+      if (!selectedPlatforms.has(v.platform)) return false;
+      if (!allAccountsSelected && !selectedAccounts.has(v.handle)) return false;
+      return true;
+    });
+  }, [allVideos, selectedPlatforms, selectedAccounts, allAccountsSelected]);
 
-      <main className="flex-1 overflow-auto bg-gray-950">
-        <Header
-          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
-          selectedPlatform={selectedPlatform}
-          onPlatformChange={setSelectedPlatform}
-        />
+  // Stats per period
+  const periodData = useMemo(() => {
+    const result: Record<Period, PeriodStats> = {} as any;
+    for (const p of PERIODS) {
+      const cutoff = getPeriodDate(p.key);
+      const filtered = baseFilteredVideos.filter((v) => {
+        if (!v.uploadDate) return p.key === "all";
+        return new Date(v.uploadDate) >= cutoff;
+      });
+      result[p.key] = calcStats(filtered, p.key);
+    }
+    return result;
+  }, [baseFilteredVideos]);
+
+  // Filtered videos for active period
+  const filteredVideos = useMemo(() => {
+    const cutoff = getPeriodDate(activePeriod);
+    return baseFilteredVideos.filter((v) => {
+      if (!v.uploadDate) return activePeriod === "all";
+      return new Date(v.uploadDate) >= cutoff;
+    });
+  }, [baseFilteredVideos, activePeriod]);
+
+  // Toggle helpers
+  const togglePlatform = (p: string) => {
+    setSelectedPlatforms((prev) => {
+      const next = new Set(prev);
+      if (next.has(p)) next.delete(p); else next.add(p);
+      return next;
+    });
+  };
+
+  const toggleAccount = (username: string) => {
+    setAllAccountsSelected(false);
+    setSelectedAccounts((prev) => {
+      const next = new Set(prev);
+      if (next.has(username)) next.delete(username); else next.add(username);
+      return next;
+    });
+  };
+
+  const selectAllAccounts = () => {
+    setAllAccountsSelected(true);
+    setSelectedAccounts(new Set(accounts.map((a) => a.username)));
+  };
+
+  const activeStats = periodData[activePeriod] || calcStats([], "all");
+
+  // Chart data: group videos by time bucket based on active period
+  const chartData = useMemo(() => {
+    if (filteredVideos.length === 0) return [];
+
+    // Decide grouping: daily for 1d/7d, weekly for 1m/3m, monthly for 6m/12m/all
+    const groupBy = ["1d", "7d"].includes(activePeriod) ? "day"
+      : ["1m", "3m"].includes(activePeriod) ? "week" : "month";
+
+    const buckets: Record<string, { videos: number; views: number; likes: number }> = {};
+
+    filteredVideos.forEach((v) => {
+      const d = new Date(v.uploadDate);
+      let key: string;
+      if (groupBy === "day") {
+        key = d.toISOString().split("T")[0]; // YYYY-MM-DD
+      } else if (groupBy === "week") {
+        // Start of week (Monday)
+        const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        const monday = new Date(d);
+        monday.setDate(diff);
+        key = monday.toISOString().split("T")[0];
+      } else {
+        key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      }
+      if (!buckets[key]) buckets[key] = { videos: 0, views: 0, likes: 0 };
+      buckets[key].videos++;
+      buckets[key].views += v.stats.views;
+      buckets[key].likes += v.stats.likes;
+    });
+
+    return Object.entries(buckets)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, data]) => {
+        // Format label
+        let label: string;
+        if (groupBy === "day") {
+          label = new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        } else if (groupBy === "week") {
+          label = "W " + new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        } else {
+          const [y, m] = date.split("-");
+          label = new Date(parseInt(y), parseInt(m) - 1).toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+        }
+        return { date: label, ...data };
+      });
+  }, [filteredVideos, activePeriod]);
+
+  const [chartMetrics, setChartMetrics] = useState<Set<string>>(new Set(["views", "videos", "likes"]));
+  const [dateFrom, setDateFrom] = useState("2025-01-01");
+  const [dateTo, setDateTo] = useState(new Date().toISOString().split("T")[0]);
+
+  // Sync date range when period changes
+  useEffect(() => {
+    const cutoff = getPeriodDate(activePeriod);
+    setDateFrom(cutoff.toISOString().split("T")[0]);
+    setDateTo(new Date().toISOString().split("T")[0]);
+  }, [activePeriod]);
+
+  const toggleChartMetric = (m: string) => {
+    setChartMetrics((prev) => {
+      const next = new Set(prev);
+      if (next.has(m)) { if (next.size > 1) next.delete(m); } else next.add(m);
+      return next;
+    });
+  };
+
+  const STAT_ROWS: { label: string; key: string; format: (stats: PeriodStats) => string }[] = [
+    { label: "Videos", key: "videos", format: (s) => formatNumber(s.videos) },
+    { label: "Videos / Day", key: "videosPerDay", format: (s) => s.videosPerDay },
+    { label: "Views", key: "views", format: (s) => formatNumber(s.views) },
+    { label: "Avg Views / Video", key: "avgViewsPerVideo", format: (s) => formatNumber(s.avgViewsPerVideo) },
+    { label: "Likes", key: "likes", format: (s) => formatNumber(s.likes) },
+    { label: "Avg Likes / Video", key: "avgLikesPerVideo", format: (s) => formatNumber(s.avgLikesPerVideo) },
+    { label: "Comments", key: "comments", format: (s) => formatNumber(s.comments) },
+    { label: "Shares", key: "shares", format: (s) => formatNumber(s.shares) },
+    { label: "Saves", key: "saves", format: (s) => formatNumber(s.saves) },
+    { label: "Engagement Rate", key: "engagement", format: (s) => s.engagement + "%" },
+  ];
+
+  return (
+    <div className="flex h-screen" style={{ backgroundColor: "#111114" }}>
+      <Sidebar isOpen={sidebarOpen} userEmail="" />
+
+      <main className="flex-1 overflow-auto" style={{ backgroundColor: "#111114" }}>
+        <Header onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
 
         <div className="p-6 space-y-6">
           {loading ? (
@@ -164,13 +320,433 @@ export default function Dashboard() {
             </div>
           ) : (
             <>
-              <StatsCards stats={stats} />
-              <AnalyticsChart data={chartData} />
-              <ViralVideos
-                videos={videos}
-                selectedPlatform={selectedPlatform}
-                limit={9}
-              />
+              {/* Period selector */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {PERIODS.map((p) => (
+                  <button
+                    key={p.key}
+                    onClick={() => setActivePeriod(p.key)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                      activePeriod === p.key
+                        ? "bg-purple-600 text-white"
+                        : "text-gray-400 hover:text-white hover:bg-gray-800"
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Platform & Account filters */}
+              <div className="rounded-2xl border border-gray-800/30 overflow-hidden" style={{ backgroundColor: "#18181b" }}>
+                <button
+                  onClick={() => setShowFilters(!showFilters)}
+                  className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                    </svg>
+                    <span className="text-sm font-medium text-white">Filters</span>
+                    <span className="text-xs text-gray-500">
+                      {selectedPlatforms.size} platforms, {allAccountsSelected ? "all" : selectedAccounts.size} accounts
+                    </span>
+                  </div>
+                  <svg className={`w-4 h-4 text-gray-400 transition-transform ${showFilters ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+
+                {showFilters && (
+                  <div className="p-4 border-t border-gray-800/30 space-y-4">
+                    {/* Platforms */}
+                    <div>
+                      <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Platforms</p>
+                      <div className="flex flex-wrap gap-2">
+                        {(["tiktok", "instagram", "youtube", "twitter"] as Platform[]).map((p) => (
+                          <button
+                            key={p}
+                            onClick={() => togglePlatform(p)}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors border ${
+                              selectedPlatforms.has(p)
+                                ? "border-purple-500/50 bg-purple-500/10 text-white"
+                                : "border-gray-700 text-gray-500 opacity-50"
+                            }`}
+                          >
+                            <PlatformIcon platform={p} size="sm" />
+                            {p.charAt(0).toUpperCase() + p.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Accounts */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs text-gray-500 uppercase tracking-wider">Accounts</p>
+                        <button
+                          onClick={selectAllAccounts}
+                          className="text-xs text-purple-400 hover:text-purple-300"
+                        >
+                          Select all
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {accounts
+                          .filter((a) => selectedPlatforms.has(a.platform))
+                          .map((account) => (
+                          <button
+                            key={account.id}
+                            onClick={() => toggleAccount(account.username)}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors border ${
+                              allAccountsSelected || selectedAccounts.has(account.username)
+                                ? "border-purple-500/50 bg-purple-500/10 text-white"
+                                : "border-gray-700 text-gray-500 opacity-50"
+                            }`}
+                          >
+                            <div className="relative">
+                              {account.profile_picture ? (
+                                <img
+                                  src={account.profile_picture}
+                                  alt={account.username}
+                                  className="w-7 h-7 rounded-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-purple-600 to-pink-500 flex items-center justify-center text-[10px] text-white font-bold">
+                                  {account.username[0]?.toUpperCase()}
+                                </div>
+                              )}
+                              <div className="absolute -bottom-0.5 -right-0.5">
+                                <PlatformIcon platform={account.platform} size="sm" />
+                              </div>
+                            </div>
+                            @{account.username.replace(/^@/, "")}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Big stats cards */}
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+                {[
+                  { label: "Videos", value: formatNumber(activeStats.videos), accent: true },
+                  { label: "Views", value: formatNumber(activeStats.views) },
+                  { label: "Likes", value: formatNumber(activeStats.likes) },
+                  { label: "Videos / Day", value: activeStats.videosPerDay },
+                  { label: "Avg Views", value: formatNumber(activeStats.avgViewsPerVideo) },
+                  { label: "Avg Likes", value: formatNumber(activeStats.avgLikesPerVideo) },
+                  { label: "Engagement", value: activeStats.engagement + "%" },
+                ].map((card, i) => (
+                  <div
+                    key={i}
+                    className={`rounded-2xl border p-4 ${card.accent ? "border-purple-500/30" : "border-gray-800/30"}`}
+                    style={{ backgroundColor: "#18181b" }}
+                  >
+                    <p className="text-xs text-gray-400">{card.label}</p>
+                    <p className="text-2xl font-bold text-white mt-1">{card.value}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Chart */}
+              <div className="rounded-2xl border border-gray-800/30 overflow-hidden" style={{ backgroundColor: "#18181b" }}>
+                <div className="flex items-center justify-between p-4 border-b border-gray-800/30" style={{ backgroundColor: "#1f1f23" }}>
+                  <h2 className="text-lg font-semibold text-white">Analytics</h2>
+                  <div className="flex items-center gap-1">
+                    {([
+                      { key: "views", color: "#9333ea", label: "Views" },
+                      { key: "videos", color: "#f59e0b", label: "Videos" },
+                      { key: "likes", color: "#ef4444", label: "Likes" },
+                    ] as const).map((m) => (
+                      <button
+                        key={m.key}
+                        onClick={() => toggleChartMetric(m.key)}
+                        className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors border ${
+                          chartMetrics.has(m.key)
+                            ? "border-gray-600 text-white"
+                            : "border-gray-800 text-gray-500 opacity-50"
+                        }`}
+                      >
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: chartMetrics.has(m.key) ? m.color : "#4b5563" }} />
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="p-4">
+                  {chartData.length === 0 ? (
+                    <div className="flex items-center justify-center h-[280px] text-gray-500 text-sm">
+                      No data for this period
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={320}>
+                      <AreaChart data={chartData}>
+                        <defs>
+                          <linearGradient id="gradientViews" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#9333ea" stopOpacity={0.25} />
+                            <stop offset="100%" stopColor="#9333ea" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="gradientVideos" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.25} />
+                            <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="gradientLikes" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#ef4444" stopOpacity={0.25} />
+                            <stop offset="100%" stopColor="#ef4444" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                        <XAxis
+                          dataKey="date"
+                          stroke="#6b7280"
+                          tick={{ fill: "#6b7280", fontSize: 11 }}
+                          axisLine={{ stroke: "#27272a" }}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          yAxisId="left"
+                          stroke="#6b7280"
+                          tick={{ fill: "#6b7280", fontSize: 11 }}
+                          axisLine={{ stroke: "#27272a" }}
+                          tickLine={false}
+                          tickFormatter={(v: number) => {
+                            if (v >= 1000000) return (v / 1000000).toFixed(1) + "M";
+                            if (v >= 1000) return (v / 1000).toFixed(0) + "K";
+                            return v.toString();
+                          }}
+                        />
+                        {chartMetrics.has("videos") && (
+                          <YAxis
+                            yAxisId="right"
+                            orientation="right"
+                            stroke="#6b7280"
+                            tick={{ fill: "#6b7280", fontSize: 11 }}
+                            axisLine={{ stroke: "#27272a" }}
+                            tickLine={false}
+                          />
+                        )}
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: "#1f1f23",
+                            border: "1px solid #374151",
+                            borderRadius: "8px",
+                            fontSize: "12px",
+                          }}
+                          labelStyle={{ color: "#9ca3af" }}
+                          formatter={(value: number, name: string) => [formatNumber(value), name.charAt(0).toUpperCase() + name.slice(1)]}
+                        />
+                        {chartMetrics.has("views") && (
+                          <Area
+                            yAxisId="left"
+                            type="monotone"
+                            dataKey="views"
+                            name="views"
+                            stroke="#9333ea"
+                            strokeWidth={2}
+                            fill="url(#gradientViews)"
+                            dot={chartData.length <= 20 ? { r: 3, fill: "#9333ea" } : false}
+                          />
+                        )}
+                        {chartMetrics.has("likes") && (
+                          <Area
+                            yAxisId="left"
+                            type="monotone"
+                            dataKey="likes"
+                            name="likes"
+                            stroke="#ef4444"
+                            strokeWidth={2}
+                            fill="url(#gradientLikes)"
+                            dot={chartData.length <= 20 ? { r: 3, fill: "#ef4444" } : false}
+                          />
+                        )}
+                        {chartMetrics.has("videos") && (
+                          <Area
+                            yAxisId="right"
+                            type="monotone"
+                            dataKey="videos"
+                            name="videos"
+                            stroke="#f59e0b"
+                            strokeWidth={2}
+                            fill="url(#gradientVideos)"
+                            dot={chartData.length <= 20 ? { r: 3, fill: "#f59e0b" } : false}
+                          />
+                        )}
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+
+              {/* Date range video explorer */}
+              <div className="rounded-2xl border border-gray-800/30 overflow-hidden" style={{ backgroundColor: "#18181b" }}>
+                <div className="flex items-center justify-between p-4 border-b border-gray-800/30" style={{ backgroundColor: "#1f1f23" }}>
+                  <h2 className="text-lg font-semibold text-white">Video Explorer</h2>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => setDateFrom(e.target.value)}
+                      className="px-3 py-1.5 rounded-lg border border-gray-700 text-white text-xs focus:outline-none focus:border-purple-500"
+                      style={{ backgroundColor: "#111114", colorScheme: "dark" }}
+                    />
+                    <span className="text-gray-500 text-xs">to</span>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      onChange={(e) => setDateTo(e.target.value)}
+                      className="px-3 py-1.5 rounded-lg border border-gray-700 text-white text-xs focus:outline-none focus:border-purple-500"
+                      style={{ backgroundColor: "#111114", colorScheme: "dark" }}
+                    />
+                  </div>
+                </div>
+                <div className="p-4">
+                  {(() => {
+                    const from = new Date(dateFrom);
+                    const to = new Date(dateTo + "T23:59:59");
+                    const allDateVideos = baseFilteredVideos
+                      .filter((v) => {
+                        const d = new Date(v.uploadDate);
+                        return d >= from && d <= to;
+                      })
+                      .sort((a, b) => b.stats.views - a.stats.views);
+                    const dateVideos = allDateVideos.slice(0, 100);
+
+                    const totalViews = allDateVideos.reduce((s, v) => s + v.stats.views, 0);
+                    const totalLikes = allDateVideos.reduce((s, v) => s + v.stats.likes, 0);
+
+                    return (
+                      <>
+                        <div className="flex items-center gap-4 mb-4 text-sm">
+                          <span className="text-gray-400">{allDateVideos.length.toLocaleString()} video{allDateVideos.length !== 1 ? "s" : ""}{allDateVideos.length > 100 ? " (top 100 shown)" : ""}</span>
+                          <span className="text-gray-600">|</span>
+                          <span className="text-gray-400">{formatNumber(totalViews)} views</span>
+                          <span className="text-gray-600">|</span>
+                          <span className="text-gray-400">{formatNumber(totalLikes)} likes</span>
+                        </div>
+                        {dateVideos.length === 0 ? (
+                          <p className="text-gray-500 text-sm text-center py-6">No videos in this date range</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {dateVideos.map((video, idx) => (
+                              <div
+                                key={video.id}
+                                className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 transition-colors"
+                              >
+                                <span className={`w-6 text-center text-xs font-bold ${
+                                  idx === 0 ? "text-yellow-400" : idx === 1 ? "text-gray-300" : idx === 2 ? "text-orange-400" : "text-gray-600"
+                                }`}>
+                                  {idx + 1}
+                                </span>
+                                <div className="relative w-12 h-16 rounded-lg overflow-hidden bg-gray-800 flex-shrink-0">
+                                  {video.thumbnailUrl ? (
+                                    <img src={video.thumbnailUrl} alt="" className="w-full h-full object-cover" />
+                                  ) : (
+                                    <div className="w-full h-full bg-gradient-to-br from-purple-600/30 to-pink-600/30 flex items-center justify-center">
+                                      <svg className="w-4 h-4 text-white/50" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                                    </div>
+                                  )}
+                                  <div className="absolute top-0.5 right-0.5">
+                                    <PlatformIcon platform={video.platform} size="sm" />
+                                  </div>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm text-white font-medium truncate">@{video.handle}</p>
+                                  <p className="text-xs text-gray-500 truncate">{video.description || "No description"}</p>
+                                </div>
+                                <div className="flex items-center gap-4 text-xs flex-shrink-0">
+                                  <div className="text-right">
+                                    <p className="text-white font-semibold">{formatNumber(video.stats.views)}</p>
+                                    <p className="text-gray-500">views</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-white font-semibold">{formatNumber(video.stats.likes)}</p>
+                                    <p className="text-gray-500">likes</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-white font-semibold">{formatNumber(video.stats.comments)}</p>
+                                    <p className="text-gray-500">comments</p>
+                                  </div>
+                                  <p className="text-gray-500 w-16 text-right">
+                                    {new Date(video.uploadDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Comparison table */}
+              <div className="rounded-2xl border border-gray-800/30 overflow-hidden" style={{ backgroundColor: "#18181b" }}>
+                <div className="p-4 border-b border-gray-800/30" style={{ backgroundColor: "#1f1f23" }}>
+                  <h2 className="text-lg font-semibold text-white">Performance Breakdown</h2>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-800/30" style={{ backgroundColor: "#1f1f23" }}>
+                        <th className="py-3 px-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-40">
+                          Metric
+                        </th>
+                        {PERIODS.map((p) => (
+                          <th
+                            key={p.key}
+                            className={`py-3 px-3 text-right text-xs font-medium uppercase tracking-wider cursor-pointer transition-colors ${
+                              activePeriod === p.key
+                                ? "text-purple-400 bg-purple-500/5"
+                                : "text-gray-400 hover:text-white"
+                            }`}
+                            onClick={() => setActivePeriod(p.key)}
+                          >
+                            {p.short}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {STAT_ROWS.map((row, idx) => (
+                        <tr
+                          key={row.key}
+                          className={`border-b border-gray-800/10 hover:bg-white/5 transition-colors ${
+                            idx % 2 === 0 ? "" : "bg-white/[0.02]"
+                          }`}
+                        >
+                          <td className="py-3 px-4 text-sm text-gray-300 font-medium">
+                            {row.label}
+                          </td>
+                          {PERIODS.map((p) => (
+                            <td
+                              key={p.key}
+                              className={`py-3 px-3 text-sm text-right font-mono ${
+                                activePeriod === p.key
+                                  ? "text-purple-400 bg-purple-500/5 font-semibold"
+                                  : "text-gray-300"
+                              }`}
+                            >
+                              {row.format(periodData[p.key])}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Top videos for selected period */}
+              <div>
+                <h2 className="text-lg font-semibold text-white mb-4">
+                  Top Videos — {PERIODS.find((p) => p.key === activePeriod)?.label}
+                </h2>
+                <ViralVideos videos={filteredVideos} limit={3} />
+              </div>
             </>
           )}
         </div>
