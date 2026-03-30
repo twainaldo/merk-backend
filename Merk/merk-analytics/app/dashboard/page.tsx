@@ -84,13 +84,26 @@ export default function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [allVideos, setAllVideos] = useState<Video[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set(["tiktok", "instagram", "youtube", "twitter"]));
+  const [selectedPlatforms] = useState<Set<string>>(new Set(["tiktok", "instagram", "youtube", "twitter"]));
   const [selectedAccounts, setSelectedAccounts] = useState<Set<string>>(new Set());
   const [allAccountsSelected, setAllAccountsSelected] = useState(true);
   const [loading, setLoading] = useState(true);
   const [activePeriod, setActivePeriod] = useState<Period>("all");
-  const [showFilters, setShowFilters] = useState(false);
   const supabase = createClient();
+
+  // Load saved account selection from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem("merk_selected_accounts");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setSelectedAccounts(new Set(parsed));
+          setAllAccountsSelected(false);
+        }
+      } catch {}
+    }
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -201,20 +214,12 @@ export default function Dashboard() {
     });
   }, [baseFilteredVideos, activePeriod]);
 
-  // Toggle helpers
-  const togglePlatform = (p: string) => {
-    setSelectedPlatforms((prev) => {
-      const next = new Set(prev);
-      if (next.has(p)) next.delete(p); else next.add(p);
-      return next;
-    });
-  };
-
   const toggleAccount = (username: string) => {
     setAllAccountsSelected(false);
     setSelectedAccounts((prev) => {
       const next = new Set(prev);
       if (next.has(username)) next.delete(username); else next.add(username);
+      localStorage.setItem("merk_selected_accounts", JSON.stringify([...next]));
       return next;
     });
   };
@@ -222,6 +227,7 @@ export default function Dashboard() {
   const selectAllAccounts = () => {
     setAllAccountsSelected(true);
     setSelectedAccounts(new Set(accounts.map((a) => a.username)));
+    localStorage.removeItem("merk_selected_accounts");
   };
 
   const activeStats = periodData[activePeriod] || calcStats([], "all");
@@ -337,96 +343,50 @@ export default function Dashboard() {
                 ))}
               </div>
 
-              {/* Platform & Account filters */}
-              <div className="rounded-2xl border border-gray-800/30 overflow-hidden" style={{ backgroundColor: "#18181b" }}>
-                <button
-                  onClick={() => setShowFilters(!showFilters)}
-                  className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                    </svg>
-                    <span className="text-sm font-medium text-white">Filters</span>
-                    <span className="text-xs text-gray-500">
-                      {selectedPlatforms.size} platforms, {allAccountsSelected ? "all" : selectedAccounts.size} accounts
-                    </span>
-                  </div>
-                  <svg className={`w-4 h-4 text-gray-400 transition-transform ${showFilters ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-
-                {showFilters && (
-                  <div className="p-4 border-t border-gray-800/30 space-y-4">
-                    {/* Platforms */}
-                    <div>
-                      <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Platforms</p>
-                      <div className="flex flex-wrap gap-2">
-                        {(["tiktok", "instagram", "youtube", "twitter"] as Platform[]).map((p) => (
-                          <button
-                            key={p}
-                            onClick={() => togglePlatform(p)}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors border ${
-                              selectedPlatforms.has(p)
-                                ? "border-purple-500/50 bg-purple-500/10 text-white"
-                                : "border-gray-700 text-gray-500 opacity-50"
-                            }`}
-                          >
-                            <PlatformIcon platform={p} size="sm" />
-                            {p.charAt(0).toUpperCase() + p.slice(1)}
-                          </button>
-                        ))}
+              {/* Account filters */}
+              <div className="rounded-2xl border border-gray-800/30 p-4" style={{ backgroundColor: "#18181b" }}>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-500 uppercase font-medium tracking-wider">Accounts</span>
+                  {!allAccountsSelected && (
+                    <button
+                      onClick={selectAllAccounts}
+                      className="text-xs text-purple-400 hover:text-purple-300"
+                    >
+                      Select all
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {accounts.map((account) => (
+                    <button
+                      key={account.id}
+                      onClick={() => toggleAccount(account.username)}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors border ${
+                        allAccountsSelected || selectedAccounts.has(account.username)
+                          ? "border-purple-500/50 bg-purple-500/10 text-white"
+                          : "border-gray-700 text-gray-500 opacity-50"
+                      }`}
+                    >
+                      <div className="relative">
+                        {account.profile_picture ? (
+                          <img
+                            src={account.profile_picture}
+                            alt={account.username}
+                            className="w-7 h-7 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-purple-600 to-pink-500 flex items-center justify-center text-[10px] text-white font-bold">
+                            {account.username[0]?.toUpperCase()}
+                          </div>
+                        )}
+                        <div className="absolute -bottom-0.5 -right-0.5">
+                          <PlatformIcon platform={account.platform} size="sm" />
+                        </div>
                       </div>
-                    </div>
-
-                    {/* Accounts */}
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-xs text-gray-500 uppercase tracking-wider">Accounts</p>
-                        <button
-                          onClick={selectAllAccounts}
-                          className="text-xs text-purple-400 hover:text-purple-300"
-                        >
-                          Select all
-                        </button>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {accounts
-                          .filter((a) => selectedPlatforms.has(a.platform))
-                          .map((account) => (
-                          <button
-                            key={account.id}
-                            onClick={() => toggleAccount(account.username)}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors border ${
-                              allAccountsSelected || selectedAccounts.has(account.username)
-                                ? "border-purple-500/50 bg-purple-500/10 text-white"
-                                : "border-gray-700 text-gray-500 opacity-50"
-                            }`}
-                          >
-                            <div className="relative">
-                              {account.profile_picture ? (
-                                <img
-                                  src={account.profile_picture}
-                                  alt={account.username}
-                                  className="w-7 h-7 rounded-full object-cover"
-                                />
-                              ) : (
-                                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-purple-600 to-pink-500 flex items-center justify-center text-[10px] text-white font-bold">
-                                  {account.username[0]?.toUpperCase()}
-                                </div>
-                              )}
-                              <div className="absolute -bottom-0.5 -right-0.5">
-                                <PlatformIcon platform={account.platform} size="sm" />
-                              </div>
-                            </div>
-                            @{account.username.replace(/^@/, "")}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
+                      @{account.username.replace(/^@/, "")}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Big stats cards */}
