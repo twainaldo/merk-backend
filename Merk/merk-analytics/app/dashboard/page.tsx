@@ -91,19 +91,6 @@ export default function Dashboard() {
   const [activePeriod, setActivePeriod] = useState<Period>("all");
   const supabase = createClient();
 
-  // Load saved account selection from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem("merk_selected_accounts");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setSelectedAccounts(new Set(parsed));
-          setAllAccountsSelected(false);
-        }
-      } catch {}
-    }
-  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -124,7 +111,23 @@ export default function Dashboard() {
             created_at: a.created_at,
           }));
           setAccounts(accs);
-          setSelectedAccounts(new Set(accs.map((a: Account) => a.username)));
+          // Only set all accounts if no saved selection in localStorage
+          const saved = localStorage.getItem("merk_selected_accounts");
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                setSelectedAccounts(new Set(parsed));
+                setAllAccountsSelected(false);
+              } else {
+                setSelectedAccounts(new Set(accs.map((a: Account) => a.username)));
+              }
+            } catch {
+              setSelectedAccounts(new Set(accs.map((a: Account) => a.username)));
+            }
+          } else {
+            setSelectedAccounts(new Set(accs.map((a: Account) => a.username)));
+          }
         }
 
         // Fetch ALL videos with pagination (no limit)
