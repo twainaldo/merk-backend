@@ -201,6 +201,47 @@ const videoQueries = {
     }
   },
 
+  // Get videos by hashtag (substring match)
+  getByHashtag: {
+    all: async (accountId, hashtag) => {
+      let query = supabase
+        .from('videos')
+        .select('*')
+        .order('published_date', { ascending: false });
+
+      if (accountId) query = query.eq('account_id', accountId);
+      if (hashtag) query = query.ilike('hashtags', `%${hashtag}%`);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    }
+  },
+
+  // Get videos by account username (join accounts table)
+  getByUsername: {
+    all: async (username) => {
+      // First find the account
+      const { data: accounts, error: accErr } = await supabase
+        .from('accounts')
+        .select('id')
+        .ilike('username', username);
+
+      if (accErr) throw accErr;
+      if (!accounts || !accounts.length) return [];
+
+      const accountId = accounts[0].id;
+      const { data, error } = await supabase
+        .from('videos')
+        .select('*')
+        .eq('account_id', accountId)
+        .order('published_date', { ascending: false });
+
+      if (error) throw error;
+      return data || [];
+    }
+  },
+
   // Calculer les totaux pour un compte
   getTotals: {
     get: async (accountId) => {

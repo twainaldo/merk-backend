@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const cron = require('node-cron');
@@ -41,6 +42,8 @@ app.use(cors({
   origin: [
     'http://localhost:3001',
     'http://localhost:3002',
+    'https://merkus.uk',
+    'https://www.merkus.uk',
     'https://merk-analytics.vercel.app',
     /^https:\/\/.*\.vercel\.app$/ // Allow all Vercel preview deployments
   ],
@@ -147,20 +150,39 @@ app.post('/api/accounts/bulk', async (req, res) => {
     const errors = [];
 
     // Importer chaque compte
+    const importedAccounts = [];
     for (const account of results.success) {
       try {
-        await accountQueries.add.run({
+        const result = await accountQueries.add.run({
           platform: account.platform,
           username: account.username,
           url: account.url
         });
         imported++;
+        importedAccounts.push({ ...account, id: result.lastInsertRowid });
       } catch (error) {
         errors.push({
           account,
           error: error.message
         });
       }
+    }
+
+    // Scrape profile pictures in background
+    for (const account of importedAccounts) {
+      scrapeProfilePicture(account.url, account.platform).then(async (profilePic) => {
+        if (profilePic) {
+          try {
+            await supabase
+              .from('accounts')
+              .update({ profile_picture: profilePic })
+              .eq('id', account.id);
+            console.log(`📸 Profile picture saved for ${account.username}`);
+          } catch (e) {
+            console.warn(`⚠️ Failed to save profile picture: ${e.message}`);
+          }
+        }
+      }).catch(e => console.error(`❌ Profile scrape error for ${account.username}:`, e.message));
     }
 
     res.json({
@@ -171,6 +193,41 @@ app.post('/api/accounts/bulk', async (req, res) => {
       parseErrors: results.errors,
       importErrors: errors
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Fetch profile pictures for a platform (or all)
+app.post('/api/accounts/fetch-pictures', async (req, res) => {
+  try {
+    const { platform } = req.body;
+    let query = supabase.from('accounts').select('*');
+    if (platform) {
+      query = query.ilike('platform', platform);
+    }
+    const { data: accounts, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+
+    let updated = 0;
+    let failed = 0;
+    for (const acc of accounts) {
+      try {
+        const pic = await scrapeProfilePicture(acc.url, acc.platform);
+        if (pic) {
+          await supabase.from('accounts').update({ profile_picture: pic }).eq('id', acc.id);
+          updated++;
+          console.log(`📸 Profile picture updated for ${acc.username}`);
+        } else {
+          failed++;
+        }
+      } catch (e) {
+        failed++;
+        console.error(`❌ Profile scrape error for ${acc.username}:`, e.message);
+      }
+    }
+
+    res.json({ success: true, updated, failed, total: accounts.length });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -265,6 +322,80 @@ app.get('/api/dashboard', async (req, res) => {
     res.json({
       summary: Object.values(summary),
       recentActivity: latestStats.slice(0, 10)
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============= CLIPS POSTING API (for Gavino integration) =============
+
+// Get videos for a specific account, filterable by hashtag
+app.get('/api/videos/by-username/:username', async (req, res) => {
+  try {
+    const { username } = req.params;
+    const videos = await videoQueries.getByUsername.all(username);
+    res.json({ videos, count: videos.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get videos filtered by hashtag (across all accounts or specific account)
+app.get('/api/videos/by-hashtag', async (req, res) => {
+  try {
+    const { hashtag, account_id } = req.query;
+    if (!hashtag) {
+      return res.status(400).json({ error: 'hashtag query param required' });
+    }
+    const videos = await videoQueries.getByHashtag.all(account_id || null, hashtag);
+    res.json({ videos, count: videos.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get videos grouped by streamer hashtag (for Gavino Posts tab)
+app.get('/api/videos/by-streamer', async (req, res) => {
+  try {
+    const { username } = req.query;
+    if (!username) {
+      return res.status(400).json({ error: 'username query param required (e.g. martymikey)' });
+    }
+    const allVideos = await videoQueries.getByUsername.all(username);
+
+    // Group by streamer hashtag
+    const streamerMap = {
+      'lospollos': ['#lospollos', '#lospollostv'],
+      'lacy': ['#lacy', '#fazelacy'],
+      'n3on': ['#n3on', '#neon'],
+    };
+
+    const grouped = {};
+    const unmatched = [];
+
+    allVideos.forEach(v => {
+      const ht = (v.hashtags || '').toLowerCase();
+      let matched = false;
+      for (const [streamer, tags] of Object.entries(streamerMap)) {
+        if (tags.some(t => ht.includes(t))) {
+          if (!grouped[streamer]) grouped[streamer] = [];
+          grouped[streamer].push(v);
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) unmatched.push(v);
+    });
+
+    res.json({
+      streamers: Object.entries(grouped).map(([id, videos]) => ({
+        id,
+        count: videos.length,
+        videos: videos.slice(0, 200), // cap per streamer
+      })),
+      unmatched: { count: unmatched.length, videos: unmatched.slice(0, 50) },
+      total: allVideos.length,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
