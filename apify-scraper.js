@@ -43,7 +43,7 @@ const ACTOR_CONFIG = {
       comments: item.commentsCount || item.comments || 0,
       shares: 0,
       saves: 0,
-      duration: item.videoDuration || item.duration || 0,
+      duration: Math.round(parseFloat(item.videoDuration || item.duration) || 0),
       published_date: item.timestamp || item.takenAtTimestamp || null,
       description: item.caption || item.alt || '',
       hashtags: (item.hashtags || []).map(h => `#${h}`).join(' '),
@@ -73,7 +73,15 @@ const ACTOR_CONFIG = {
       comments: item.commentsCount || item.comments || 0,
       shares: 0,
       saves: 0,
-      duration: item.duration || 0,
+      duration: (() => {
+        const d = item.duration || 0;
+        if (typeof d === 'string' && d.includes(':')) {
+          const parts = d.split(':').map(Number);
+          if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+          if (parts.length === 2) return parts[0] * 60 + parts[1];
+        }
+        return Math.round(parseFloat(d) || 0);
+      })(),
       published_date: item.date || item.uploadDate || item.publishedAt || null,
       description: item.title || item.description || '',
       hashtags: '',
