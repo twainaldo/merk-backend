@@ -245,8 +245,8 @@ export default function Dashboard() {
     if (filteredVideos.length === 0) return [];
 
     // Decide grouping: daily for 1d/7d, weekly for 1m/3m, monthly for 6m/12m/all
-    const groupBy = ["1d", "7d"].includes(activePeriod) ? "day"
-      : ["1m", "3m"].includes(activePeriod) ? "week" : "month";
+    const groupBy = ["1d", "3d", "7d", "14d", "21d"].includes(activePeriod) ? "day"
+      : ["1m", "3m", "all"].includes(activePeriod) ? "week" : "month";
 
     const buckets: Record<string, { videos: number; views: number; likes: number }> = {};
 
@@ -282,7 +282,7 @@ export default function Dashboard() {
           label = "W " + new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
         } else {
           const [y, m] = date.split("-");
-          label = new Date(parseInt(y), parseInt(m) - 1).toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+          label = new Date(parseInt(y), parseInt(m) - 1).toLocaleDateString("en-US", { month: "short", year: "numeric" });
         }
         return { date: label, ...data };
       });
