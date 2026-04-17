@@ -16,6 +16,7 @@ export default function LogsPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [connected, setConnected] = useState(false);
+  const [copied, setCopied] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom
@@ -112,10 +113,16 @@ export default function LogsPage() {
                 onClick={() => {
                   const text = logs.map(l => `[${l.time}] ${l.message}`).join("\n");
                   navigator.clipboard.writeText(text);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
                 }}
-                className="px-3 py-1.5 text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-600 rounded-lg transition-colors"
+                className={`px-3 py-1.5 text-sm border rounded-lg transition-all ${
+                  copied
+                    ? "text-green-400 border-green-600 bg-green-500/10"
+                    : "text-gray-400 hover:text-white border-gray-700 hover:border-gray-600"
+                }`}
               >
-                Copy
+                {copied ? "✓ Copied" : "Copy"}
               </button>
               <button
                 onClick={() => setLogs([])}
