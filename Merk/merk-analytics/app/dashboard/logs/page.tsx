@@ -107,12 +107,23 @@ export default function LogsPage() {
               </p>
             </div>
 
-            <button
-              onClick={() => setLogs([])}
-              className="px-3 py-1.5 text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-600 rounded-lg transition-colors"
-            >
-              Clear
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  const text = logs.map(l => `[${l.time}] ${l.message}`).join("\n");
+                  navigator.clipboard.writeText(text);
+                }}
+                className="px-3 py-1.5 text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-600 rounded-lg transition-colors"
+              >
+                Copy
+              </button>
+              <button
+                onClick={() => setLogs([])}
+                className="px-3 py-1.5 text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-600 rounded-lg transition-colors"
+              >
+                Clear
+              </button>
+            </div>
           </div>
 
           {/* Log terminal */}
