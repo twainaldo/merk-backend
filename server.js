@@ -919,50 +919,46 @@ app.get('/api/apify/fetch-all', async (req, res) => {
   let grandTotal = 0;
 
   try {
-    const platforms = ['TikTok', 'Instagram', 'YouTube'];
-    for (const platform of platforms) {
-      sendLog(`\n📡 Fetching ${platform.toUpperCase()}...`);
-      const accounts = await accountQueries.getByPlatform.all(platform);
+    const keys = await apifyKeyQueries.getAll.all();
+    if (keys.length === 0) {
+      apifyStatus.isRunning = false;
+      return sendError('No Apify API keys configured. Add keys in Settings.');
+    }
+    const allApiKeys = keys.map(k => k.api_key);
+
+    const platforms = [
+      { db: 'TikTok', api: 'tiktok' },
+      { db: 'Instagram', api: 'instagram' },
+      { db: 'YouTube', api: 'youtube' },
+    ];
+
+    for (const { db: dbPlatform, api: apiPlatform } of platforms) {
+      sendLog(`\n📡 Fetching ${dbPlatform}...`);
+      const accounts = await accountQueries.getByPlatform.all(dbPlatform);
       if (!accounts.length) {
-        sendLog(`  No ${platform} accounts, skipping`);
+        sendLog(`  No ${dbPlatform} accounts, skipping`);
         continue;
       }
 
       let platformTotal = 0;
-      for (const account of accounts) {
-        sendLog(`  @${account.username} (${platform})...`);
+      for (let i = 0; i < accounts.length; i++) {
+        const account = accounts[i];
+        sendLog(`  [${i+1}/${accounts.length}] @${account.username}...`);
         try {
-          const result = await fetchVideosForAccount(account, sendLog);
-          const videos = result?.videos || [];
-
-          // Get existing video URLs for this account
-          const existingVideos = await videoQueries.getUrlsByAccount.all(account.id);
-          const existingUrls = new Set(existingVideos.map(v => v.video_url));
+          const videos = await fetchVideosForAccount(allApiKeys, apiPlatform, account, null, (msg) => sendLog(`  ${msg}`));
 
           let newCount = 0;
           let updatedCount = 0;
           for (const video of videos) {
-            if (!video.video_url) continue;
-            if (!existingUrls.has(video.video_url)) {
-              await videoQueries.upsertFull.run({
-                account_id: account.id, video_url: video.video_url, video_id: video.video_id || '',
-                views: video.views || 0, likes: video.likes || 0, comments: video.comments || 0,
-                shares: video.shares || 0, saves: video.saves || 0, duration: video.duration || 0,
-                published_date: video.published_date || null, description: video.description || '',
-                hashtags: video.hashtags || '', audio_name: video.audio_name || '',
-                audio_url: video.audio_url || '', thumbnail_url: video.thumbnail_url || '',
-              });
+            try {
+              await videoQueries.upsertFull.run(video);
               newCount++;
-            } else {
-              await videoQueries.updateMetrics.run({
-                video_url: video.video_url,
-                views: video.views || 0, likes: video.likes || 0, comments: video.comments || 0,
-                shares: video.shares || 0, saves: video.saves || 0,
-              });
+            } catch (e) {
+              // upsertFull handles both insert and update
               updatedCount++;
             }
           }
-          sendLog(`  @${account.username}: ${newCount} new, ${updatedCount} updated`);
+          sendLog(`  @${account.username}: ${videos.length} videos (${newCount} saved)`);
           platformTotal += newCount;
 
           // Update hourly stats
@@ -976,13 +972,13 @@ app.get('/api/apify/fetch-all', async (req, res) => {
             delta_videos: (totalVideos?.count || 0) - (lastStat?.total_videos || 0),
             delta_views: (totalViews?.total || 0) - (lastStat?.total_views || 0),
             followers: 0, likes: totalViews?.total_likes || 0,
-            platform: platform, username: account.username,
+            platform: dbPlatform, username: account.username,
           });
         } catch (err) {
           sendLog(`  ❌ @${account.username}: ${err.message}`);
         }
       }
-      sendLog(`📊 ${platform.toUpperCase()}: ${platformTotal} new videos`);
+      sendLog(`📊 ${dbPlatform}: ${platformTotal} new videos`);
       grandTotal += platformTotal;
     }
 
