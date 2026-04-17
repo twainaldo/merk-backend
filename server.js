@@ -948,12 +948,16 @@ app.get('/api/apify/fetch-all', async (req, res) => {
           const videos = await fetchVideosForAccount(allApiKeys, apiPlatform, account, null, (msg) => sendLog(`  ${msg}`));
 
           let saved = 0;
+          let saveErrors = [];
           for (const video of videos) {
             try {
               await videoQueries.upsertFull.run(video);
               saved++;
-            } catch (e) {}
+            } catch (e) {
+              if (saveErrors.length < 3) saveErrors.push(e.message?.substring(0, 80));
+            }
           }
+          if (saveErrors.length) sendLog(`  ⚠️ Save errors: ${saveErrors.join(' | ')}`);
           sendLog(`  @${account.username}: ${videos.length} videos (${saved} saved)`);
           platformTotal += saved;
 

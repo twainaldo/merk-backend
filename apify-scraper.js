@@ -54,12 +54,16 @@ const ACTOR_CONFIG = {
   },
   youtube: {
     actorId: 'streamers/youtube-scraper',
-    buildInput: (account, maxResults) => ({
-      startUrls: [account.url],
-      maxResults: maxResults || 100000,
-      maxResultsShorts: maxResults || 100000,
-      maxResultStreams: 0,
-    }),
+    buildInput: (account, maxResults) => {
+      // Actor expects {url: "..."} objects in startUrls, not bare strings
+      const url = account.url || `https://www.youtube.com/@${account.username.replace(/^@/, '')}`;
+      return {
+        startUrls: [{ url }],
+        maxResults: maxResults || 100000,
+        maxResultsShorts: maxResults || 100000,
+        maxResultStreams: 0,
+      };
+    },
     mapItem: (item, account) => ({
       account_id: account.id,
       video_url: item.url || (item.id ? `https://www.youtube.com/watch?v=${item.id}` : ''),
