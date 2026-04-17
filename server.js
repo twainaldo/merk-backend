@@ -13,6 +13,56 @@ const { parseBulkAccounts } = require('./platform-detector');
 const ReportGenerator = require('./report-generator');
 const { scrapeProfilePicture } = require('./profile-scraper');
 const proxyManager = require('./proxy-manager');
+const https = require('https');
+const http = require('http');
+
+// ── Thumbnail cache: download CDN thumbnails locally ──
+const thumbsDir = path.join(__dirname, 'thumbnails');
+if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+
+async function cacheThumbnail(url, videoId) {
+  if (!url || !videoId) return url;
+  // Already cached?
+  if (url.startsWith('/api/thumbnails/')) return url;
+  const safe = String(videoId).replace(/[^a-zA-Z0-9_-]/g, '_');
+  const ext = '.jpg';
+  const fname = safe + ext;
+  const fpath = path.join(thumbsDir, fname);
+  if (fs.existsSync(fpath) && fs.statSync(fpath).size > 500) {
+    return `/api/thumbnails/${fname}`;
+  }
+  try {
+    const mod = url.startsWith('https') ? https : http;
+    await new Promise((resolve, reject) => {
+      const req = mod.get(url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          // Follow redirect once
+          const mod2 = res.headers.location.startsWith('https') ? https : http;
+          mod2.get(res.headers.location, { timeout: 10000 }, (res2) => {
+            if (res2.statusCode !== 200) { reject(new Error('HTTP ' + res2.statusCode)); return; }
+            const ws = fs.createWriteStream(fpath);
+            res2.pipe(ws);
+            ws.on('finish', resolve);
+            ws.on('error', reject);
+          }).on('error', reject);
+          return;
+        }
+        if (res.statusCode !== 200) { reject(new Error('HTTP ' + res.statusCode)); return; }
+        const ws = fs.createWriteStream(fpath);
+        res.pipe(ws);
+        ws.on('finish', resolve);
+        ws.on('error', reject);
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    });
+    const stat = fs.statSync(fpath);
+    if (stat.size < 500) { fs.unlinkSync(fpath); return url; }
+    return `/api/thumbnails/${fname}`;
+  } catch (e) {
+    return url; // keep original URL as fallback
+  }
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -251,6 +301,14 @@ app.post('/api/accounts/:id/upload-avatar', avatarUpload.single('file'), async (
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+app.get('/api/thumbnails/:filename', (req, res) => {
+  const safe = path.basename(req.params.filename);
+  const p = path.join(thumbsDir, safe);
+  if (!fs.existsSync(p)) return res.status(404).send('Not found');
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.sendFile(p);
 });
 
 app.get('/api/avatars/:filename', (req, res) => {
@@ -848,6 +906,7 @@ app.get('/api/apify/fetch-videos', async (req, res) => {
         let saved = 0;
         for (const video of videos) {
           try {
+            if (video.thumbnail_url) video.thumbnail_url = await cacheThumbnail(video.thumbnail_url, video.video_id || video.video_url);
             await videoQueries.upsertFull.run(video);
             saved++;
             if (saved % 100 === 0) {
@@ -955,6 +1014,7 @@ app.get('/api/apify/fetch-all', async (req, res) => {
           let saveErrors = [];
           for (const video of videos) {
             try {
+              if (video.thumbnail_url) video.thumbnail_url = await cacheThumbnail(video.thumbnail_url, video.video_id || video.video_url);
               await videoQueries.upsertFull.run(video);
               saved++;
             } catch (e) {
