@@ -993,6 +993,82 @@ app.get('/api/apify/fetch-all', async (req, res) => {
   }
 });
 
+// Get posts grouped by streamer (via hashtags) for a given account or all accounts
+app.get('/api/posts-by-streamer', async (req, res) => {
+  try {
+    const accountId = req.query.account_id;
+    const since = req.query.since; // optional ISO date
+
+    let query = supabase.from('videos').select('id, video_url, video_id, description, hashtags, published_date, views, likes, comments, shares, saves, duration, thumbnail_url, accounts(id, platform, username)');
+    if (accountId) query = query.eq('account_id', accountId);
+    if (since) query = query.gte('published_date', since);
+    query = query.order('published_date', { ascending: false });
+
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Map streamer by hashtag
+    const STREAMER_TAGS = {
+      'lospollostv': 'lospollos', 'lospollos': 'lospollos',
+      'n3on': 'n3on', 'n3onclips': 'n3on',
+      'lacy': 'lacy', 'lacyclips': 'lacy',
+      'ishowspeed': 'ishowspeed', 'speed': 'ishowspeed',
+      'kaicenat': 'kaicenat', 'kai': 'kaicenat',
+      'dukedennis': 'dukedennis',
+      'agent00': 'agent00',
+      'plaqueboymax': 'plaqueboymax',
+    };
+
+    const posts = (data || []).map(v => {
+      const tags = ((v.hashtags || '') + ' ' + (v.description || '')).toLowerCase();
+      let streamer = 'unknown';
+      for (const [tag, sid] of Object.entries(STREAMER_TAGS)) {
+        if (tags.includes('#' + tag) || tags.includes(tag)) {
+          streamer = sid;
+          break;
+        }
+      }
+      return {
+        id: v.id,
+        video_url: v.video_url,
+        video_id: v.video_id,
+        published_date: v.published_date,
+        streamer,
+        account_username: v.accounts?.username || '',
+        account_id: v.accounts?.id || null,
+        platform: v.accounts?.platform || '',
+        views: v.views || 0,
+        likes: v.likes || 0,
+        comments: v.comments || 0,
+        shares: v.shares || 0,
+        saves: v.saves || 0,
+        thumbnail_url: v.thumbnail_url || '',
+        description: (v.description || '').substring(0, 200),
+      };
+    });
+
+    // Group by streamer
+    const byStreamer = {};
+    posts.forEach(p => {
+      if (!byStreamer[p.streamer]) byStreamer[p.streamer] = [];
+      byStreamer[p.streamer].push(p);
+    });
+
+    // Summary per streamer
+    const summary = Object.entries(byStreamer).map(([sid, vids]) => ({
+      streamer: sid,
+      total_posts: vids.length,
+      total_views: vids.reduce((s, v) => s + v.views, 0),
+      total_likes: vids.reduce((s, v) => s + v.likes, 0),
+      latest_post: vids[0]?.published_date || null,
+    }));
+
+    res.json({ success: true, posts, summary, total: posts.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Fetch stats (update metrics) via Apify (SSE stream)
 app.get('/api/apify/fetch-stats', async (req, res) => {
   const platform = req.query.platform;
