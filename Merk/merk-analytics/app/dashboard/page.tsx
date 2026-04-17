@@ -9,6 +9,8 @@ import PlatformIcon from "./components/PlatformIcon";
 import ViralVideos from "./components/ViralVideos";
 import { Video, Platform, Account } from "./types";
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+
 type Period = "1d" | "3d" | "7d" | "14d" | "21d" | "1m" | "3m" | "6m" | "12m" | "all";
 
 const PERIODS: { key: Period; label: string; short: string }[] = [
@@ -89,6 +91,8 @@ export default function Dashboard() {
   const [allAccountsSelected, setAllAccountsSelected] = useState(true);
   const [loading, setLoading] = useState(true);
   const [activePeriod, setActivePeriod] = useState<Period>("all");
+  const [fetchingAll, setFetchingAll] = useState(false);
+  const [fetchLog, setFetchLog] = useState("");
   const supabase = createClient();
 
 
@@ -329,7 +333,7 @@ export default function Dashboard() {
             </div>
           ) : (
             <>
-              {/* Period selector */}
+              {/* Period selector + Fetch All */}
               <div className="flex items-center gap-1.5 flex-wrap">
                 {PERIODS.map((p) => (
                   <button
@@ -344,6 +348,62 @@ export default function Dashboard() {
                     {p.label}
                   </button>
                 ))}
+                <div className="ml-auto flex items-center gap-2">
+                  {fetchLog && (
+                    <span className="text-xs text-gray-400 max-w-[300px] truncate">{fetchLog}</span>
+                  )}
+                  <button
+                    disabled={fetchingAll}
+                    onClick={async () => {
+                      setFetchingAll(true);
+                      setFetchLog("Starting...");
+                      try {
+                        const res = await fetch(`${API_BASE}/api/apify/fetch-all`);
+                        const reader = res.body?.getReader();
+                        if (!reader) throw new Error("No stream");
+                        const decoder = new TextDecoder();
+                        let buf = "";
+                        while (true) {
+                          const { done, value } = await reader.read();
+                          if (done) break;
+                          buf += decoder.decode(value, { stream: true });
+                          const lines = buf.split("\n");
+                          buf = lines.pop() || "";
+                          for (const line of lines) {
+                            if (line.startsWith("data: ")) {
+                              try {
+                                const d = JSON.parse(line.slice(6));
+                                if (d.message) setFetchLog(d.message);
+                                if (d.type === "done" || d.type === "error") {
+                                  setFetchingAll(false);
+                                  setTimeout(() => setFetchLog(""), 5000);
+                                }
+                              } catch {}
+                            }
+                          }
+                        }
+                        setFetchingAll(false);
+                      } catch (e: any) {
+                        setFetchLog("Error: " + e.message);
+                        setFetchingAll(false);
+                      }
+                    }}
+                    className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                      fetchingAll
+                        ? "bg-green-600/30 text-green-300 cursor-wait"
+                        : "bg-green-600 hover:bg-green-700 text-white"
+                    }`}
+                  >
+                    {fetchingAll ? (
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                    )}
+                    {fetchingAll ? "Fetching..." : "Fetch All New"}
+                  </button>
+                </div>
               </div>
 
               {/* Account filters */}
@@ -631,6 +691,14 @@ export default function Dashboard() {
                                   <div className="text-right">
                                     <p className="text-white font-semibold">{formatNumber(video.stats.comments)}</p>
                                     <p className="text-gray-500">comments</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className={`font-semibold ${
+                                      video.stats.engagement >= 10 ? "text-green-400" :
+                                      video.stats.engagement >= 5 ? "text-yellow-400" :
+                                      "text-white"
+                                    }`}>{video.stats.engagement.toFixed(1)}%</p>
+                                    <p className="text-gray-500">eng.</p>
                                   </div>
                                   <p className="text-gray-500 w-16 text-right">
                                     {new Date(video.uploadDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}

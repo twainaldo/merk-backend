@@ -887,6 +887,113 @@ app.get('/api/apify/fetch-videos', async (req, res) => {
   }
 });
 
+// Fetch ALL platforms sequentially (new posts only — incremental)
+app.get('/api/apify/fetch-all', async (req, res) => {
+  if (apifyStatus.isRunning) {
+    return res.status(409).json({ error: 'A scraping job is already running' });
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+
+  const sendLog = (msg) => {
+    res.write(`data: ${JSON.stringify({ type: 'log', message: msg })}\n\n`);
+    addServerLog(msg);
+  };
+  const sendDone = (msg) => {
+    res.write(`data: ${JSON.stringify({ type: 'done', message: msg })}\n\n`);
+    addServerLog(msg);
+    res.end();
+  };
+  const sendError = (msg) => {
+    res.write(`data: ${JSON.stringify({ type: 'error', message: msg })}\n\n`);
+    addServerLog(`ERROR: ${msg}`);
+    res.end();
+  };
+
+  apifyStatus.isRunning = true;
+  let grandTotal = 0;
+
+  try {
+    const platforms = ['tiktok', 'instagram', 'youtube'];
+    for (const platform of platforms) {
+      sendLog(`\n📡 Fetching ${platform.toUpperCase()}...`);
+      const accounts = await accountQueries.getByPlatform.all(platform);
+      if (!accounts.length) {
+        sendLog(`  No ${platform} accounts, skipping`);
+        continue;
+      }
+
+      let platformTotal = 0;
+      for (const account of accounts) {
+        sendLog(`  @${account.username} (${platform})...`);
+        try {
+          const result = await fetchVideosForAccount(account, sendLog);
+          const videos = result?.videos || [];
+
+          // Get existing video URLs for this account
+          const existingVideos = await videoQueries.getUrlsByAccount.all(account.id);
+          const existingUrls = new Set(existingVideos.map(v => v.video_url));
+
+          let newCount = 0;
+          let updatedCount = 0;
+          for (const video of videos) {
+            if (!video.video_url) continue;
+            if (!existingUrls.has(video.video_url)) {
+              await videoQueries.upsertFull.run({
+                account_id: account.id, video_url: video.video_url, video_id: video.video_id || '',
+                views: video.views || 0, likes: video.likes || 0, comments: video.comments || 0,
+                shares: video.shares || 0, saves: video.saves || 0, duration: video.duration || 0,
+                published_date: video.published_date || null, description: video.description || '',
+                hashtags: video.hashtags || '', audio_name: video.audio_name || '',
+                audio_url: video.audio_url || '', thumbnail_url: video.thumbnail_url || '',
+              });
+              newCount++;
+            } else {
+              await videoQueries.updateMetrics.run({
+                video_url: video.video_url,
+                views: video.views || 0, likes: video.likes || 0, comments: video.comments || 0,
+                shares: video.shares || 0, saves: video.saves || 0,
+              });
+              updatedCount++;
+            }
+          }
+          sendLog(`  @${account.username}: ${newCount} new, ${updatedCount} updated`);
+          platformTotal += newCount;
+
+          // Update hourly stats
+          const totalVideos = await videoQueries.countByAccount.get(account.id);
+          const totalViews = await videoQueries.totalViewsByAccount.get(account.id);
+          const lastStat = await hourlyQueries.getLatestByAccount.get(account.id);
+          await hourlyQueries.insert.run({
+            account_id: account.id,
+            total_videos: totalVideos?.count || 0,
+            total_views: totalViews?.total || 0,
+            delta_videos: (totalVideos?.count || 0) - (lastStat?.total_videos || 0),
+            delta_views: (totalViews?.total || 0) - (lastStat?.total_views || 0),
+            followers: 0, likes: totalViews?.total_likes || 0,
+            platform: platform, username: account.username,
+          });
+        } catch (err) {
+          sendLog(`  ❌ @${account.username}: ${err.message}`);
+        }
+      }
+      sendLog(`📊 ${platform.toUpperCase()}: ${platformTotal} new videos`);
+      grandTotal += platformTotal;
+    }
+
+    apifyStatus.isRunning = false;
+    sendDone(`✅ All done! ${grandTotal} new videos across all platforms`);
+  } catch (error) {
+    apifyStatus.isRunning = false;
+    sendError(error.message);
+  }
+});
+
 // Fetch stats (update metrics) via Apify (SSE stream)
 app.get('/api/apify/fetch-stats', async (req, res) => {
   const platform = req.query.platform;
