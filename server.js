@@ -233,6 +233,36 @@ app.post('/api/accounts/fetch-pictures', async (req, res) => {
   }
 });
 
+// Upload profile picture manually
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const avatarsDir = path.join(__dirname, 'avatars');
+if (!fs.existsSync(avatarsDir)) fs.mkdirSync(avatarsDir, { recursive: true });
+const avatarUpload = multer({ dest: avatarsDir, limits: { fileSize: 500000 } });
+
+app.post('/api/accounts/:id/upload-avatar', avatarUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const ext = path.extname(req.file.originalname) || '.jpg';
+    const fname = `account_${req.params.id}${ext}`;
+    const dest = path.join(avatarsDir, fname);
+    fs.renameSync(req.file.path, dest);
+    const avatarUrl = `/api/avatars/${fname}`;
+    await supabase.from('accounts').update({ profile_picture: avatarUrl }).eq('id', req.params.id);
+    res.json({ success: true, avatar_url: avatarUrl });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/avatars/:filename', (req, res) => {
+  const safe = path.basename(req.params.filename);
+  const p = path.join(avatarsDir, safe);
+  if (!fs.existsSync(p)) return res.status(404).send('Not found');
+  res.sendFile(p);
+});
+
 // Supprimer un compte
 app.delete('/api/accounts/:id', async (req, res) => {
   try {
@@ -1024,6 +1054,47 @@ cron.schedule('0 21 * * *', () => {
   timezone: "Europe/Paris"
 });
 
+// FETCH STATS APIFY - 19h00
+cron.schedule('0 19 * * *', async () => {
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`🕐 FETCH STATS APIFY 19H - ${new Date().toLocaleString('fr-FR')}`);
+  console.log(`${'='.repeat(60)}\n`);
+
+  try {
+    const keys = await apifyKeyQueries.getAll.all();
+    if (keys.length === 0) { console.log('❌ No Apify keys configured'); return; }
+    const allApiKeys = keys.map(k => k.api_key);
+
+    const accounts = await accountQueries.getByPlatform.all('TikTok');
+    if (accounts.length === 0) { console.log('❌ No TikTok accounts'); return; }
+
+    console.log(`📊 Fetching stats for ${accounts.length} TikTok account(s)...`);
+    let totalUpdated = 0;
+
+    for (let i = 0; i < accounts.length; i++) {
+      const account = accounts[i];
+      console.log(`[${i + 1}/${accounts.length}] @${account.username} — fetching stats...`);
+      try {
+        const videos = await fetchStatsForVideos(allApiKeys, 'tiktok', account, null, (msg) => console.log(`  ${msg}`));
+        let updated = 0;
+        for (const video of videos) {
+          try { await videoQueries.updateMetrics.run(video); updated++; } catch (e) {}
+        }
+        totalUpdated += updated;
+        console.log(`[${i + 1}/${accounts.length}] @${account.username} — ${updated} videos updated`);
+      } catch (e) {
+        console.log(`[${i + 1}/${accounts.length}] @${account.username} — ERROR: ${e.message}`);
+      }
+    }
+
+    console.log(`\n✅ Fetch stats terminé: ${totalUpdated} videos updated`);
+  } catch (error) {
+    console.error(`\n❌ Erreur fetch stats:`, error.message);
+  }
+}, {
+  timezone: "Europe/Paris"
+});
+
 // Rafraîchir les proxies toutes les heures
 cron.schedule('0 * * * *', () => {
   console.log('🔄 Rafraîchissement des proxies...');
@@ -1044,6 +1115,7 @@ app.listen(PORT, async () => {
 ║                                                            ║
 ║     ⏰ Scraping automatique:                               ║
 ║        • Matin: 9h00 + Rapport                            ║
+║        • Stats: 19h00 (Apify TikTok)                      ║
 ║        • Soir: 21h00 + Rapport                            ║
 ║                                                            ║
 ║     ⚙️ Workers parallèles: ${(process.env.WORKER_CONCURRENCY || 10).toString().padEnd(31)} ║
