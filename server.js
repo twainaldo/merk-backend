@@ -919,7 +919,7 @@ app.get('/api/apify/fetch-all', async (req, res) => {
   let grandTotal = 0;
 
   try {
-    const platforms = ['tiktok', 'instagram', 'youtube'];
+    const platforms = ['TikTok', 'Instagram', 'YouTube'];
     for (const platform of platforms) {
       sendLog(`\n📡 Fetching ${platform.toUpperCase()}...`);
       const accounts = await accountQueries.getByPlatform.all(platform);
