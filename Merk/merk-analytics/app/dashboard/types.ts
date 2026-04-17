@@ -22,6 +22,7 @@ export interface Video {
   id: number;
   video_id: string;
   video_url: string;
+  account_id: number;
   platform: Platform;
   handle: string;
   description: string;

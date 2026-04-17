@@ -8,7 +8,7 @@ import PlatformIcon from "../components/PlatformIcon";
 import Image from "next/image";
 import { Platform, Video, Account } from "../types";
 
-type SortField = "views" | "likes";
+type SortField = "views" | "likes" | "engagement";
 const LIMITS = [100, 200, 300, 500, 1000, "all"] as const;
 type Limit = (typeof LIMITS)[number];
 
@@ -95,6 +95,15 @@ function VideoRow({ video, index }: { video: Video; index: number }) {
       <td className="py-3 px-4 text-gray-300 text-sm">{formatNumber(video.stats.comments)}</td>
       <td className="py-3 px-4 text-gray-300 text-sm">{formatNumber(video.stats.shares)}</td>
       <td className="py-3 px-4 text-gray-300 text-sm">{formatNumber(video.stats.saves)}</td>
+      <td className="py-3 px-4">
+        <span className={`text-sm font-semibold ${
+          video.stats.engagement >= 10 ? "text-green-400" :
+          video.stats.engagement >= 5 ? "text-yellow-400" :
+          "text-gray-400"
+        }`}>
+          {video.stats.engagement.toFixed(1)}%
+        </span>
+      </td>
 
       <td className="py-3 px-4">
         <div className="flex items-center gap-1">
@@ -190,6 +199,7 @@ export default function VideosPage() {
             id: v.id,
             video_id: v.video_id || "",
             video_url: v.video_url || "",
+            account_id: v.accounts?.id || 0,
             platform: (v.accounts?.platform?.toLowerCase() || "tiktok") as Platform,
             handle: v.accounts?.username || "unknown",
             description: v.description || "",
@@ -251,9 +261,9 @@ export default function VideosPage() {
     }
 
     result.sort((a, b) =>
-      sortField === "views"
-        ? b.stats.views - a.stats.views
-        : b.stats.likes - a.stats.likes
+      sortField === "views" ? b.stats.views - a.stats.views :
+      sortField === "likes" ? b.stats.likes - a.stats.likes :
+      b.stats.engagement - a.stats.engagement
     );
 
     const limit = displayLimit === "all" ? result.length : displayLimit;
@@ -370,6 +380,14 @@ export default function VideosPage() {
                 >
                   Most Likes
                 </button>
+                <button
+                  onClick={() => setSortField("engagement")}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                    sortField === "engagement" ? "bg-purple-600 text-white" : "bg-gray-800/50 text-gray-400 hover:text-white"
+                  }`}
+                >
+                  Most Engagement
+                </button>
               </div>
 
               <div className="w-px h-6 bg-gray-700" />
@@ -442,6 +460,9 @@ export default function VideosPage() {
                       <th className="py-3 px-4 text-left text-xs font-medium text-gray-400 uppercase">Comments</th>
                       <th className="py-3 px-4 text-left text-xs font-medium text-gray-400 uppercase">Shares</th>
                       <th className="py-3 px-4 text-left text-xs font-medium text-gray-400 uppercase">Saves</th>
+                      <th className="py-3 px-4 text-left text-xs font-medium text-gray-400 uppercase cursor-pointer hover:text-white" onClick={() => setSortField("engagement")}>
+                        Eng. % {sortField === "engagement" && <span className="text-purple-400">&#9660;</span>}
+                      </th>
                       <th className="py-3 px-4 text-left text-xs font-medium text-gray-400 uppercase">Link</th>
                     </tr>
                   </thead>
