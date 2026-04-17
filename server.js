@@ -947,31 +947,26 @@ app.get('/api/apify/fetch-all', async (req, res) => {
         try {
           const videos = await fetchVideosForAccount(allApiKeys, apiPlatform, account, null, (msg) => sendLog(`  ${msg}`));
 
-          let newCount = 0;
-          let updatedCount = 0;
+          let saved = 0;
           for (const video of videos) {
             try {
               await videoQueries.upsertFull.run(video);
-              newCount++;
-            } catch (e) {
-              // upsertFull handles both insert and update
-              updatedCount++;
-            }
+              saved++;
+            } catch (e) {}
           }
-          sendLog(`  @${account.username}: ${videos.length} videos (${newCount} saved)`);
-          platformTotal += newCount;
+          sendLog(`  @${account.username}: ${videos.length} videos (${saved} saved)`);
+          platformTotal += saved;
 
           // Update hourly stats
-          const totalVideos = await videoQueries.countByAccount.get(account.id);
-          const totalViews = await videoQueries.totalViewsByAccount.get(account.id);
-          const lastStat = await hourlyQueries.getLatestByAccount.get(account.id);
-          await hourlyQueries.insert.run({
+          const totals = await videoQueries.getTotals.get(account.id);
+          const lastStat = await hourlyQueries.getLatest.get(account.id);
+          await hourlyQueries.add.run({
             account_id: account.id,
-            total_videos: totalVideos?.count || 0,
-            total_views: totalViews?.total || 0,
-            delta_videos: (totalVideos?.count || 0) - (lastStat?.total_videos || 0),
-            delta_views: (totalViews?.total || 0) - (lastStat?.total_views || 0),
-            followers: 0, likes: totalViews?.total_likes || 0,
+            total_videos: totals.total_videos,
+            total_views: totals.total_views,
+            delta_videos: totals.total_videos - (lastStat?.total_videos || 0),
+            delta_views: totals.total_views - (lastStat?.total_views || 0),
+            followers: 0, likes: 0,
             platform: dbPlatform, username: account.username,
           });
         } catch (err) {
