@@ -124,13 +124,13 @@ export default function Dashboard() {
                 setSelectedAccounts(new Set(parsed));
                 setAllAccountsSelected(false);
               } else {
-                setSelectedAccounts(new Set(accs.map((a: Account) => a.username)));
+                setSelectedAccounts(new Set(accs.map((a: Account) => String(a.id))));
               }
             } catch {
-              setSelectedAccounts(new Set(accs.map((a: Account) => a.username)));
+              setSelectedAccounts(new Set(accs.map((a: Account) => String(a.id))));
             }
           } else {
-            setSelectedAccounts(new Set(accs.map((a: Account) => a.username)));
+            setSelectedAccounts(new Set(accs.map((a: Account) => String(a.id))));
           }
         }
 
@@ -161,6 +161,7 @@ export default function Dashboard() {
             id: v.id,
             video_id: v.video_id || "",
             video_url: v.video_url || "",
+            account_id: v.accounts?.id || 0,
             platform: (v.accounts?.platform?.toLowerCase() || "tiktok") as Platform,
             handle: v.accounts?.username || "unknown",
             description: v.description || "",
@@ -193,7 +194,7 @@ export default function Dashboard() {
   const baseFilteredVideos = useMemo(() => {
     return allVideos.filter((v) => {
       if (!selectedPlatforms.has(v.platform)) return false;
-      if (!allAccountsSelected && !selectedAccounts.has(v.handle)) return false;
+      if (!allAccountsSelected && !selectedAccounts.has(String(v.account_id))) return false;
       return true;
     });
   }, [allVideos, selectedPlatforms, selectedAccounts, allAccountsSelected]);
@@ -221,11 +222,11 @@ export default function Dashboard() {
     });
   }, [baseFilteredVideos, activePeriod]);
 
-  const toggleAccount = (username: string) => {
+  const toggleAccount = (accountId: string) => {
     setAllAccountsSelected(false);
     setSelectedAccounts((prev) => {
       const next = new Set(prev);
-      if (next.has(username)) next.delete(username); else next.add(username);
+      if (next.has(accountId)) next.delete(accountId); else next.add(accountId);
       localStorage.setItem("merk_selected_accounts", JSON.stringify([...next]));
       return next;
     });
@@ -233,7 +234,7 @@ export default function Dashboard() {
 
   const selectAllAccounts = () => {
     setAllAccountsSelected(true);
-    setSelectedAccounts(new Set(accounts.map((a) => a.username)));
+    setSelectedAccounts(new Set(accounts.map((a) => String(a.id))));
     localStorage.removeItem("merk_selected_accounts");
   };
 
@@ -423,9 +424,9 @@ export default function Dashboard() {
                   {accounts.map((account) => (
                     <button
                       key={account.id}
-                      onClick={() => toggleAccount(account.username)}
+                      onClick={() => toggleAccount(String(account.id))}
                       className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors border ${
-                        allAccountsSelected || selectedAccounts.has(account.username)
+                        allAccountsSelected || selectedAccounts.has(String(account.id))
                           ? "border-purple-500/50 bg-purple-500/10 text-white"
                           : "border-gray-700 text-gray-500 opacity-50"
                       }`}
