@@ -840,7 +840,9 @@ app.get('/api/apify/fetch-videos', async (req, res) => {
 
       try {
         const allApiKeys = keys.map(k => k.api_key);
-        const videos = await fetchVideosForAccount(allApiKeys, platform.toLowerCase(), account, null, (msg) => sendLog(`[${i + 1}/${accounts.length}] ${msg}`));
+        const lastDate = await videoQueries.getLatestVideoDate.get(account.id);
+        if (lastDate) sendLog(`[${i + 1}/${accounts.length}] 📌 Last known post: ${new Date(lastDate).toISOString().split('T')[0]}`);
+        const videos = await fetchVideosForAccount(allApiKeys, platform.toLowerCase(), account, null, (msg) => sendLog(`[${i + 1}/${accounts.length}] ${msg}`), lastDate);
 
         sendLog(`[${i + 1}/${accounts.length}] @${account.username} — ${videos.length} videos fetched, saving...`);
         let saved = 0;
@@ -945,7 +947,9 @@ app.get('/api/apify/fetch-all', async (req, res) => {
         const account = accounts[i];
         sendLog(`  [${i+1}/${accounts.length}] @${account.username}...`);
         try {
-          const videos = await fetchVideosForAccount(allApiKeys, apiPlatform, account, null, (msg) => sendLog(`  ${msg}`));
+          const lastDate = await videoQueries.getLatestVideoDate.get(account.id);
+          if (lastDate) sendLog(`  📌 Last known post: ${new Date(lastDate).toISOString().split('T')[0]}`);
+          const videos = await fetchVideosForAccount(allApiKeys, apiPlatform, account, null, (msg) => sendLog(`  ${msg}`), lastDate);
 
           let saved = 0;
           let saveErrors = [];

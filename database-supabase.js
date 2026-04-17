@@ -261,6 +261,22 @@ const videoQueries = {
 
       return { total_videos, total_views };
     }
+  },
+
+  getLatestVideoDate: {
+    get: async (accountId) => {
+      const { data, error } = await supabase
+        .from('videos')
+        .select('published_date')
+        .eq('account_id', accountId)
+        .not('published_date', 'is', null)
+        .order('published_date', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+      return data?.published_date || null;
+    }
   }
 };
 

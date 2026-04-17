@@ -174,7 +174,7 @@ async function fetchOneRun(client, config, account, platform, dateRange) {
 // For TikTok: fetches in 2-month chunks to bypass pagination limits
 // apiKeys = array of all available keys, rotates on error
 // onLog callback for live progress
-async function fetchVideosForAccount(apiKeys, platform, account, maxResults, onLog) {
+async function fetchVideosForAccount(apiKeys, platform, account, maxResults, onLog, sinceDate) {
   // Support both single key (string) and array of keys
   const keys = Array.isArray(apiKeys) ? apiKeys : [apiKeys];
   let currentKeyIndex = 0;
@@ -211,8 +211,18 @@ async function fetchVideosForAccount(apiKeys, platform, account, maxResults, onL
   let allItems = [];
 
   if (platform.toLowerCase() === 'tiktok') {
-    // Fetch in 2-month chunks
-    const ranges = getDateRanges();
+    // Fetch in 2-month chunks — skip ranges entirely before sinceDate
+    let ranges = getDateRanges();
+
+    if (sinceDate) {
+      const sinceStr = new Date(sinceDate).toISOString().split('T')[0];
+      const before = ranges.length;
+      ranges = ranges.filter(r => r.end >= sinceStr);
+      if (ranges.length < before) {
+        log(`⏩ Skipped ${before - ranges.length} old date ranges (last video: ${sinceStr})`);
+      }
+    }
+
     log(`📅 Splitting into ${ranges.length} date ranges for @${account.username}`);
 
     for (let r = 0; r < ranges.length; r++) {
