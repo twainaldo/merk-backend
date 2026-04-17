@@ -234,9 +234,6 @@ app.post('/api/accounts/fetch-pictures', async (req, res) => {
 });
 
 // Upload profile picture manually
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const avatarsDir = path.join(__dirname, 'avatars');
 if (!fs.existsSync(avatarsDir)) fs.mkdirSync(avatarsDir, { recursive: true });
 const avatarUpload = multer({ dest: avatarsDir, limits: { fileSize: 500000 } });
