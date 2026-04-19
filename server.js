@@ -1279,10 +1279,23 @@ const runScrapingWithReport = async (reportName) => {
   }
 };
 
-// DAILY RUN - 19h00 (single pass: stats existantes + scrape nouvelles + rapport)
-cron.schedule('0 19 * * *', async () => {
+// Shared "daily 19h" runner — used by the cron AND by the manual POST /api/run-daily endpoint.
+// Stats refresh first (Apify TikTok), then scrape new videos + report.
+let _dailyRunInProgress = false;
+
+const runDaily19h = async (label = 'DAILY 19H') => {
+  if (_dailyRunInProgress) {
+    console.log(`⚠️ ${label}: already running, skipping`);
+    return { ok: false, message: 'Already running' };
+  }
+  _dailyRunInProgress = true;
+  const startedAt = Date.now();
+  let statsUpdated = 0;
+  let statsError = null;
+  let scrapeError = null;
+
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`🕐 DAILY 19H - ${new Date().toLocaleString('fr-FR')}`);
+  console.log(`🕐 ${label} - ${new Date().toLocaleString('fr-FR')}`);
   console.log(`${'='.repeat(60)}\n`);
 
   // 1. Update stats Apify pour toutes les vidéos TikTok déjà en DB
@@ -1293,7 +1306,6 @@ cron.schedule('0 19 * * *', async () => {
       const accounts = await accountQueries.getByPlatform.all('TikTok');
       if (accounts.length > 0) {
         console.log(`📊 [1/2] Updating stats for ${accounts.length} TikTok account(s)...`);
-        let totalUpdated = 0;
         for (let i = 0; i < accounts.length; i++) {
           const account = accounts[i];
           try {
@@ -1302,13 +1314,13 @@ cron.schedule('0 19 * * *', async () => {
             for (const video of videos) {
               try { await videoQueries.updateMetrics.run(video); updated++; } catch (e) {}
             }
-            totalUpdated += updated;
+            statsUpdated += updated;
             console.log(`  [${i + 1}/${accounts.length}] @${account.username} — ${updated} videos updated`);
           } catch (e) {
             console.log(`  [${i + 1}/${accounts.length}] @${account.username} — ERROR: ${e.message}`);
           }
         }
-        console.log(`✅ Stats refresh: ${totalUpdated} videos updated\n`);
+        console.log(`✅ Stats refresh: ${statsUpdated} videos updated\n`);
       } else {
         console.log('⚠️ No TikTok accounts configured\n');
       }
@@ -1316,14 +1328,43 @@ cron.schedule('0 19 * * *', async () => {
       console.log('⚠️ No Apify keys configured\n');
     }
   } catch (error) {
+    statsError = error.message;
     console.error(`❌ Erreur fetch stats:`, error.message, '\n');
   }
 
   // 2. Scrape nouvelles vidéos + rapport quotidien
   console.log(`🆕 [2/2] Scraping nouvelles vidéos...`);
-  await runScrapingWithReport('DAILY 19H');
-}, {
-  timezone: "Europe/Paris"
+  try {
+    await runScrapingWithReport(label);
+  } catch (e) {
+    scrapeError = e.message;
+  }
+
+  _dailyRunInProgress = false;
+  return {
+    ok: !statsError && !scrapeError,
+    duration_s: Math.round((Date.now() - startedAt) / 1000),
+    stats_updated: statsUpdated,
+    stats_error: statsError,
+    scrape_error: scrapeError,
+  };
+};
+
+// Cron quotidien 19h Paris
+cron.schedule('0 19 * * *', () => { runDaily19h('DAILY 19H'); }, { timezone: "Europe/Paris" });
+
+// Manual trigger — fire-and-forget; UI can poll status via the same endpoint (returns 409 while running)
+app.post('/api/run-daily', (req, res) => {
+  if (_dailyRunInProgress) {
+    return res.status(409).json({ ok: false, message: 'Daily run already in progress' });
+  }
+  // Don't await — run in background so HTTP returns immediately
+  runDaily19h('MANUAL').catch(e => console.error('Manual daily run error:', e));
+  res.json({ ok: true, message: 'Daily run started in background' });
+});
+
+app.get('/api/run-daily/status', (req, res) => {
+  res.json({ running: _dailyRunInProgress });
 });
 
 // Rafraîchir les proxies toutes les heures
