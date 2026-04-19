@@ -1279,57 +1279,49 @@ const runScrapingWithReport = async (reportName) => {
   }
 };
 
-// RAPPORT MATIN - 9h00
-cron.schedule('0 9 * * *', () => {
-  runScrapingWithReport('RAPPORT MATIN');
-}, {
-  timezone: "Europe/Paris"
-});
-
-// RAPPORT SOIR - 21h00
-cron.schedule('0 21 * * *', () => {
-  runScrapingWithReport('RAPPORT SOIR');
-}, {
-  timezone: "Europe/Paris"
-});
-
-// FETCH STATS APIFY - 19h00
+// DAILY RUN - 19h00 (single pass: stats existantes + scrape nouvelles + rapport)
 cron.schedule('0 19 * * *', async () => {
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`🕐 FETCH STATS APIFY 19H - ${new Date().toLocaleString('fr-FR')}`);
+  console.log(`🕐 DAILY 19H - ${new Date().toLocaleString('fr-FR')}`);
   console.log(`${'='.repeat(60)}\n`);
 
+  // 1. Update stats Apify pour toutes les vidéos TikTok déjà en DB
   try {
     const keys = await apifyKeyQueries.getAll.all();
-    if (keys.length === 0) { console.log('❌ No Apify keys configured'); return; }
-    const allApiKeys = keys.map(k => k.api_key);
-
-    const accounts = await accountQueries.getByPlatform.all('TikTok');
-    if (accounts.length === 0) { console.log('❌ No TikTok accounts'); return; }
-
-    console.log(`📊 Fetching stats for ${accounts.length} TikTok account(s)...`);
-    let totalUpdated = 0;
-
-    for (let i = 0; i < accounts.length; i++) {
-      const account = accounts[i];
-      console.log(`[${i + 1}/${accounts.length}] @${account.username} — fetching stats...`);
-      try {
-        const videos = await fetchStatsForVideos(allApiKeys, 'tiktok', account, null, (msg) => console.log(`  ${msg}`));
-        let updated = 0;
-        for (const video of videos) {
-          try { await videoQueries.updateMetrics.run(video); updated++; } catch (e) {}
+    if (keys.length > 0) {
+      const allApiKeys = keys.map(k => k.api_key);
+      const accounts = await accountQueries.getByPlatform.all('TikTok');
+      if (accounts.length > 0) {
+        console.log(`📊 [1/2] Updating stats for ${accounts.length} TikTok account(s)...`);
+        let totalUpdated = 0;
+        for (let i = 0; i < accounts.length; i++) {
+          const account = accounts[i];
+          try {
+            const videos = await fetchStatsForVideos(allApiKeys, 'tiktok', account, null, (msg) => console.log(`  ${msg}`));
+            let updated = 0;
+            for (const video of videos) {
+              try { await videoQueries.updateMetrics.run(video); updated++; } catch (e) {}
+            }
+            totalUpdated += updated;
+            console.log(`  [${i + 1}/${accounts.length}] @${account.username} — ${updated} videos updated`);
+          } catch (e) {
+            console.log(`  [${i + 1}/${accounts.length}] @${account.username} — ERROR: ${e.message}`);
+          }
         }
-        totalUpdated += updated;
-        console.log(`[${i + 1}/${accounts.length}] @${account.username} — ${updated} videos updated`);
-      } catch (e) {
-        console.log(`[${i + 1}/${accounts.length}] @${account.username} — ERROR: ${e.message}`);
+        console.log(`✅ Stats refresh: ${totalUpdated} videos updated\n`);
+      } else {
+        console.log('⚠️ No TikTok accounts configured\n');
       }
+    } else {
+      console.log('⚠️ No Apify keys configured\n');
     }
-
-    console.log(`\n✅ Fetch stats terminé: ${totalUpdated} videos updated`);
   } catch (error) {
-    console.error(`\n❌ Erreur fetch stats:`, error.message);
+    console.error(`❌ Erreur fetch stats:`, error.message, '\n');
   }
+
+  // 2. Scrape nouvelles vidéos + rapport quotidien
+  console.log(`🆕 [2/2] Scraping nouvelles vidéos...`);
+  await runScrapingWithReport('DAILY 19H');
 }, {
   timezone: "Europe/Paris"
 });
@@ -1353,9 +1345,7 @@ app.listen(PORT, async () => {
 ║     🌐 Serveur: http://localhost:${PORT.toString().padEnd(34)} ║
 ║                                                            ║
 ║     ⏰ Scraping automatique:                               ║
-║        • Matin: 9h00 + Rapport                            ║
-║        • Stats: 19h00 (Apify TikTok)                      ║
-║        • Soir: 21h00 + Rapport                            ║
+║        • 19h00 — Stats Apify + nouvelles vidéos + rapport ║
 ║                                                            ║
 ║     ⚙️ Workers parallèles: ${(process.env.WORKER_CONCURRENCY || 10).toString().padEnd(31)} ║
 ║     🌐 Proxies rotatifs: Activés                          ║
