@@ -355,35 +355,43 @@ export default function Dashboard() {
                   )}
                   <button
                     disabled={fetchingAll}
+                    title="Lance le job 19h maintenant : update stats des vidéos existantes + scrape nouvelles vidéos"
                     onClick={async () => {
                       setFetchingAll(true);
-                      setFetchLog("Starting...");
+                      setFetchLog("Starting daily run...");
                       try {
-                        const res = await fetch(`${API_BASE}/api/apify/fetch-all`);
-                        const reader = res.body?.getReader();
-                        if (!reader) throw new Error("No stream");
-                        const decoder = new TextDecoder();
-                        let buf = "";
-                        while (true) {
-                          const { done, value } = await reader.read();
-                          if (done) break;
-                          buf += decoder.decode(value, { stream: true });
-                          const lines = buf.split("\n");
-                          buf = lines.pop() || "";
-                          for (const line of lines) {
-                            if (line.startsWith("data: ")) {
-                              try {
-                                const d = JSON.parse(line.slice(6));
-                                if (d.message) setFetchLog(d.message);
-                                if (d.type === "done" || d.type === "error") {
-                                  setFetchingAll(false);
-                                  setTimeout(() => setFetchLog(""), 5000);
-                                }
-                              } catch {}
-                            }
-                          }
+                        const startRes = await fetch(`${API_BASE}/api/run-daily`, { method: "POST" });
+                        const startData = await startRes.json();
+                        if (!startData.ok) {
+                          setFetchLog(startData.message || "Could not start");
+                          setFetchingAll(false);
+                          setTimeout(() => setFetchLog(""), 5000);
+                          return;
                         }
-                        setFetchingAll(false);
+                        setFetchLog("Daily run in progress (stats + new videos)...");
+                        // Poll status every 15s, max 20 min
+                        let polls = 0;
+                        const maxPolls = 80;
+                        const poll = async () => {
+                          polls++;
+                          try {
+                            const st = await fetch(`${API_BASE}/api/run-daily/status`).then(r => r.json());
+                            if (!st.running) {
+                              setFetchLog("Done — refreshing");
+                              setFetchingAll(false);
+                              setTimeout(() => setFetchLog(""), 5000);
+                              return;
+                            }
+                          } catch {}
+                          if (polls >= maxPolls) {
+                            setFetchLog("Timeout — check Merkus logs");
+                            setFetchingAll(false);
+                            setTimeout(() => setFetchLog(""), 5000);
+                            return;
+                          }
+                          setTimeout(poll, 15000);
+                        };
+                        setTimeout(poll, 15000);
                       } catch (e: any) {
                         setFetchLog("Error: " + e.message);
                         setFetchingAll(false);
@@ -402,7 +410,7 @@ export default function Dashboard() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                       </svg>
                     )}
-                    {fetchingAll ? "Fetching..." : "Fetch All New"}
+                    {fetchingAll ? "Running..." : "Run daily now"}
                   </button>
                 </div>
               </div>
