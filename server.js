@@ -1067,16 +1067,26 @@ app.get('/api/posts-by-streamer', async (req, res) => {
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
 
-    // Map streamer by hashtag
+    // Map streamer by hashtag. Order matters: longer/more specific keys first
+    // so 'lospollostv' wins over 'speed' (which would otherwise also match
+    // 'lospollostv' via substring? — defensive). The match below uses
+    // tags.includes(tag), so a generic key like 'speed' will catch many
+    // unrelated posts; keep generic tags last and prefer specific ones.
     const STREAMER_TAGS = {
-      'lospollostv': 'lospollos', 'lospollos': 'lospollos',
-      'n3on': 'n3on', 'n3onclips': 'n3on',
-      'lacy': 'lacy', 'lacyclips': 'lacy',
-      'ishowspeed': 'ishowspeed', 'speed': 'ishowspeed',
-      'kaicenat': 'kaicenat', 'kai': 'kaicenat',
-      'dukedennis': 'dukedennis',
+      'lospollostv': 'lospollos', 'lospollosclips': 'lospollos', 'lospollos': 'lospollos',
+      'n3onclips': 'n3on', 'n3onstream': 'n3on', 'n3on': 'n3on',
+      'lacyclips': 'lacy', 'lacystream': 'lacy', 'lacy': 'lacy',
+      'jasontheweenclips': 'jasontheween', 'jasontheween': 'jasontheween',
+      'ishowspeedclips': 'ishowspeed', 'ishowspeed': 'ishowspeed', 'speed': 'ishowspeed',
+      'kaicenatclips': 'kaicenat', 'kaicenat': 'kaicenat', 'kai': 'kaicenat',
+      'dukedennisclips': 'dukedennis', 'dukedennis': 'dukedennis',
       'agent00': 'agent00',
       'plaqueboymax': 'plaqueboymax',
+      'marlon': 'marlon',
+      'yonna': 'yonna',
+      'sketch': 'sketch',
+      'ddg': 'ddg',
+      'deshaefrost': 'deshaefrost',
     };
 
     const posts = (data || []).map(v => {
@@ -1298,18 +1308,30 @@ const runDaily19h = async (label = 'DAILY 19H') => {
   console.log(`🕐 ${label} - ${new Date().toLocaleString('fr-FR')}`);
   console.log(`${'='.repeat(60)}\n`);
 
-  // 1. Update stats Apify pour toutes les vidéos TikTok déjà en DB
+  // 1. Update stats Apify pour toutes les vidéos déjà en DB sur les 3
+  // plateformes. fetchStatsForVideos re-fetch les métriques (views, likes,
+  // comments) sans rajouter de nouveau row — c'est upsertMetrics derrière.
+  // Boucler sur TikTok + Instagram + YouTube assure que les counters de
+  // /api/posts/by-streamer (et donc le revenue dashboard côté Gavino) sont
+  // toujours frais à ±2h près après chaque cron tick.
   try {
     const keys = await apifyKeyQueries.getAll.all();
     if (keys.length > 0) {
       const allApiKeys = keys.map(k => k.api_key);
-      const accounts = await accountQueries.getByPlatform.all('TikTok');
-      if (accounts.length > 0) {
-        console.log(`📊 [1/2] Updating stats for ${accounts.length} TikTok account(s)...`);
+      const PLATFORMS = ['TikTok', 'Instagram', 'YouTube'];
+      for (const platformName of PLATFORMS) {
+        const accounts = await accountQueries.getByPlatform.all(platformName);
+        if (accounts.length === 0) {
+          console.log(`⚠️ No ${platformName} accounts configured`);
+          continue;
+        }
+        console.log(`📊 Updating stats for ${accounts.length} ${platformName} account(s)...`);
         for (let i = 0; i < accounts.length; i++) {
           const account = accounts[i];
           try {
-            const videos = await fetchStatsForVideos(allApiKeys, 'tiktok', account, null, (msg) => console.log(`  ${msg}`));
+            const videos = await fetchStatsForVideos(
+              allApiKeys, platformName.toLowerCase(), account, null,
+              (msg) => console.log(`  ${msg}`));
             let updated = 0;
             for (const video of videos) {
               try { await videoQueries.updateMetrics.run(video); updated++; } catch (e) {}
@@ -1320,10 +1342,8 @@ const runDaily19h = async (label = 'DAILY 19H') => {
             console.log(`  [${i + 1}/${accounts.length}] @${account.username} — ERROR: ${e.message}`);
           }
         }
-        console.log(`✅ Stats refresh: ${statsUpdated} videos updated\n`);
-      } else {
-        console.log('⚠️ No TikTok accounts configured\n');
       }
+      console.log(`✅ Stats refresh: ${statsUpdated} videos updated across ${PLATFORMS.length} platforms\n`);
     } else {
       console.log('⚠️ No Apify keys configured\n');
     }
@@ -1350,8 +1370,11 @@ const runDaily19h = async (label = 'DAILY 19H') => {
   };
 };
 
-// Cron quotidien 19h Paris
-cron.schedule('0 19 * * *', () => { runDaily19h('DAILY 19H'); }, { timezone: "Europe/Paris" });
+// Cron stats + scrape: every 2h between 09h and 23h Paris (8 runs/day).
+// Delta scraping is already in place (sinceDate via getLatestVideoDate),
+// so the Apify cost stays low — we mostly re-fetch metrics on existing
+// videos and only pay for genuinely new ones.
+cron.schedule('0 9-23/2 * * *', () => { runDaily19h('STATS+SCRAPE 2h'); }, { timezone: "Europe/Paris" });
 
 // Manual trigger — fire-and-forget; UI can poll status via the same endpoint (returns 409 while running)
 app.post('/api/run-daily', (req, res) => {
